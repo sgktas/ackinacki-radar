@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Acki Nacki Radar</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <span class="app-kicker">Community Radar</span>
+          <h1>Acki Nacki Radar</h1>
+        </div>
+
+        <button class="icon-btn" type="button" id="refreshBtn">↻</button>
+      </header>
+
+      <section class="view active" id="view-home">
+        <section class="balance-card">
+          <div class="balance-head">
+            <div>
+              <span class="muted">Season XP</span>
+              <strong id="userPoints">-</strong>
+            </div>
+            <div class="avatar" id="avatar">A</div>
+          </div>
+
+          <div class="balance-meta">
+            <span id="homeUserName">Kullanıcı yükleniyor</span>
+            <span id="homeMiningBadge">Radar aktif</span>
+          </div>
+        </section>
+
+        <section class="network-strip">
+          <article>
+            <span>TPS</span>
+            <strong id="networkTps">Soon</strong>
+          </article>
+          <article>
+            <span>Block</span>
+            <strong id="networkBlock">Soon</strong>
+          </article>
+          <article>
+            <span>Epoch</span>
+            <strong id="networkEpoch">Soon</strong>
+          </article>
+        </section>
+
+        <section class="stats-grid">
+          <article class="stat-card">
+            <span>Radar Users</span>
+            <strong id="totalUsers">-</strong>
+          </article>
+          <article class="stat-card">
+            <span>Total XP</span>
+            <strong id="totalPoints">-</strong>
+          </article>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <h2>Bugünkü Radar</h2>
+            <span>Özet</span>
+          </div>
+
+          <div id="homeSummary" class="stack-list">
+            <div class="loading">Veri yükleniyor...</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <h2>Öne çıkan Quests</h2>
+            <button class="text-btn" type="button" data-open-tab="quests">Tümünü gör</button>
+          </div>
+
+          <div id="homeTasks" class="stack-list">
+            <div class="loading">Veri yükleniyor...</div>
+          </div>
+        </section>
+
+        <section class="notice-card">
+          <strong>Not official</strong>
+          <span>Topluluk tarafından geliştirilen Acki Nacki ekosistem radaridir.</span>
+        </section>
+      </section>
+
+      <section class="view" id="view-quests">
+        <section class="screen-head">
+          <span class="muted">Learn • Explore • Verify</span>
+          <h2>Quests</h2>
+          <p>
+            Ekosistemi öğren, uygulamaları keşfet, cüzdan ve network takibini alışkanlık haline getir.
+          </p>
+        </section>
+
+        <section class="quest-tabs">
+          <button type="button" class="chip active">All</button>
+          <button type="button" class="chip">Learn</button>
+          <button type="button" class="chip">Mining</button>
+          <button type="button" class="chip">Social</button>
+        </section>
+
+        <section class="panel">
+          <div id="tasksList" class="stack-list">
+            <div class="loading">Veri yükleniyor...</div>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="view-explore">
+        <section class="screen-head">
+          <span class="muted">Ecosystem Hub</span>
+          <h2>Keşfet</h2>
+          <p>
+            Acki Nacki ekosistemindeki uygulamaları, mining araçlarını, oyunları,
+            rehberleri ve takip edilmesi gereken kaynakları tek yerden keşfet.
+          </p>
+        </section>
+
+        <section class="search-box">
+          <span>⌕</span>
+          <input type="text" placeholder="App, guide veya araç ara" id="exploreSearch" />
+        </section>
+
+        <section class="category-row" id="exploreCategories">
+          <button type="button" class="chip active" data-category="all">All</button>
+          <button type="button" class="chip" data-category="official">Official</button>
+          <button type="button" class="chip" data-category="mining">Mining</button>
+          <button type="button" class="chip" data-category="games">Games</button>
+          <button type="button" class="chip" data-category="tools">Tools</button>
+          <button type="button" class="chip" data-category="guides">Guides</button>
+        </section>
+
+        <section class="featured-app">
+          <div>
+            <span>Featured Radar</span>
+            <h3>Bee Engine</h3>
+            <p>
+              Acki Nacki üzerinde uygulama, mining ve ekosistem entegrasyonlarını
+              takip etmek için ana başlıklardan biri.
+            </p>
+          </div>
+          <button type="button">Learn</button>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <h2>Trending Radar</h2>
+            <span>Community list</span>
+          </div>
+
+          <div class="explore-list" id="exploreList">
+            <article class="explore-card" data-category="official tools" data-title="Acki Nacki Dashboard">
+              <div class="app-icon">A</div>
+              <div class="explore-content">
+                <div class="explore-head">
+                  <strong>Acki Nacki Dashboard</strong>
+                  <em>Official</em>
+                </div>
+                <small>Network status, ecosystem metrics and live dashboard resources.</small>
+                <div class="tag-row">
+                  <span>Network</span>
+                  <span>Stats</span>
+                  <span>Dashboard</span>
+                </div>
+              </div>
+              <button type="button" class="open-btn">Soon</button>
+            </article>
+
+            <article class="explore-card" data-category="official tools" data-title="Acki Nacki Explorer">
+              <div class="app-icon">E</div>
+              <div class="explore-content">
+                <div class="explore-head">
+                  <strong>Acki Nacki Explorer</strong>
+                  <em>Official</em>
+                </div>
+                <small>Blocks, transactions, accounts and chain activity tracking.</small>
+                <div class="tag-row">
+                  <span>Blocks</span>
+                  <span>Tx</span>
+                  <span>Accounts</span>
+                </div>
+              </div>
+              <button type="button" class="open-btn">Soon</button>
+            </article>
+
+            <article class="explore-card" data-category="mining guides" data-title="Bee Engine">
+              <div class="app-icon">B</div>
+              <div class="explore-content">
+                <div class="explore-head">
+                  <strong>Bee Engine</strong>
+                  <em>Guide</em>
+                </div>
+                <small>Mining, app contribution and future integration learning area.</small>
+                <div class="tag-row">
+                  <span>Mining</span>
+                  <span>Integration</span>
+                  <span>Guide</span>
+                </div>
+              </div>
+              <button type="button" class="open-btn">Learn</button>
+            </article>
+
+            <article class="explore-card" data-category="mining games" data-title="Popit">
+              <div class="app-icon">P</div>
+              <div class="explore-content">
+                <div class="explore-head">
+                  <strong>Popit</strong>
+                  <em>Mining</em>
+                </div>
+                <small>Activity based NACKL mining experience and ecosystem engagement.</small>
+                <div class="tag-row">
+                  <span>Mining</span>
+                  <span>Boost</span>
+                  <span>Activity</span>
+                </div>
+              </div>
+              <button type="button" class="open-btn">Soon</button>
+            </article>
+
+            <article class="explore-card" data-category="games mining" data-title="Goblingames">
+              <div class="app-icon">G</div>
+              <div class="explore-content">
+                <div class="explore-head">
+                  <strong>Goblingames</strong>
+                  <em>Game</em>
+                </div>
+                <small>Game-style ecosystem app with mining and activity mechanics.</small>
+                <div class="tag-row">
+                  <span>Games</span>
+                  <span>Mining</span>
+                  <span>Community</span>
+                </div>
+              </div>
+              <button type="button" class="open-btn">Soon</button>
+            </article>
+
+            <article class="explore-card" data-category="mining tools" data-title="MinerGo">
+              <div class="app-icon">M</div>
+              <div class="explore-content">
+                <div class="explore-head">
+                  <strong>MinerGo</strong>
+                  <em>Mining</em>
+                </div>
+                <small>Mining focused ecosystem tool to watch and compare later.</small>
+                <div class="tag-row">
+                  <span>Mining</span>
+                  <span>Tool</span>
+                  <span>Tracker</span>
+                </div>
+              </div>
+              <button type="button" class="open-btn">Soon</button>
+            </article>
+
+            <article class="explore-card" data-category="guides" data-title="Acki Nacki Learn">
+              <div class="app-icon">L</div>
+              <div class="explore-content">
+                <div class="explore-head">
+                  <strong>Acki Nacki Learn</strong>
+                  <em>Guide</em>
+                </div>
+                <small>Beginner-friendly learning path for network, wallet, mining and Bee Engine.</small>
+                <div class="tag-row">
+                  <span>Learn</span>
+                  <span>Beginner</span>
+                  <span>Docs</span>
+                </div>
+              </div>
+              <button type="button" class="open-btn">Learn</button>
+            </article>
+
+            <article class="explore-card" data-category="tools" data-title="Wallet Tracker">
+              <div class="app-icon">W</div>
+              <div class="explore-content">
+                <div class="explore-head">
+                  <strong>Wallet Tracker</strong>
+                  <em>Soon</em>
+                </div>
+                <small>Future balance, last transactions and NACKL activity tracking area.</small>
+                <div class="tag-row">
+                  <span>Wallet</span>
+                  <span>Balance</span>
+                  <span>Soon</span>
+                </div>
+              </div>
+              <button type="button" class="open-btn">Soon</button>
+            </article>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="view-profile">
+        <section class="screen-head">
+          <span class="muted">Account</span>
+          <h2>Profil</h2>
+          <p>
+            XP, referans, sezon sıralaması ve ileride bağlanacak wallet bilgileri burada görünecek.
+          </p>
+        </section>
+
+        <section class="profile-card">
+          <div class="avatar big" id="profileAvatar">A</div>
+          <div>
+            <span class="muted">Radar hesabı</span>
+            <strong id="profileName">Yükleniyor</strong>
+            <small id="profileUserId">-</small>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <h2>Profil bilgileri</h2>
+            <span>XP</span>
+          </div>
+
+          <div id="profileBox" class="stack-list">
+            <div class="loading">Veri yükleniyor...</div>
+          </div>
+        </section>
+
+        <section class="panel wallet-panel">
+          <div class="panel-title">
+            <h2>Wallet Radar</h2>
+            <span>Mainnet</span>
+          </div>
+          <p class="panel-copy">Cüzdan adı veya adres ile NACKL bakiyesi ve son aktiviteyi sorgula.</p>
+          <div class="wallet-search">
+            <input id="walletInput" type="text" placeholder="ackerman veya 0:..." autocomplete="off" />
+            <button id="walletLookupButton" type="button">Sorgula</button>
+          </div>
+          <div id="walletResult" class="wallet-result">
+            <div class="loading compact">Cüzdan adı veya adres gir.</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <h2>Referans linki</h2>
+            <span>Davet et</span>
+          </div>
+          <code id="referral">Yükleniyor...</code>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <h2>Season Ranking</h2>
+            <span>Top 10</span>
+          </div>
+
+          <div id="leaderboard" class="stack-list">
+            <div class="loading">Veri yükleniyor...</div>
+          </div>
+        </section>
+      </section>
+
+      <nav class="bottom-nav">
+        <button class="nav-item active" type="button" data-tab="home">
+          <span>⌂</span>
+          Ana
+        </button>
+        <button class="nav-item" type="button" data-tab="quests">
+          <span>✓</span>
+          Quests
+        </button>
+        <button class="nav-item" type="button" data-tab="explore">
+          <span>⌕</span>
+          Keşfet
+        </button>
+        <button class="nav-item" type="button" data-tab="profile">
+          <span>◉</span>
+          Profil
+        </button>
+      </nav>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

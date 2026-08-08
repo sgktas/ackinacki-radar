@@ -1,0 +1,12 @@
+# Secrets — never version these
+.env
+.env.*
+
+# Runtime state: grows constantly, contains mining secretKey values and user PII
+data/
+
+# Reinstallable from package.json
+node_modules/
+
+# pm2 / npm logs if ever written locally
+*.log
