@@ -22,9 +22,7 @@ import {
   createMiner as beeCreateMiner,
   acquireMiner as beeAcquireMiner,
   discardMiner as beeDiscardMiner,
-  enterBeeChainCritical as beeEnterChainCritical,
   generateMiningKeys as beeGenerateMiningKeys,
-  leaveBeeChainCritical as beeLeaveChainCritical,
   readMinerData as beeReadMinerData,
   resolveMinerAddress as beeResolveMinerAddress,
   summarizeMinerEvents as beeSummarizeMinerEvents,
@@ -3361,19 +3359,7 @@ const beeLastEventIndex = new Map<string, number>();
 // of them addressed this, because the race is on-chain, not in our process).
 // Fix: don't start a new session for a wallet while its previous one hasn't
 // been confirmed settled (landed or definitively lost) yet.
-// Stores the timestamp the lock was taken, not just a flag, so it can expire.
-// A pure boolean deadlocked mining outright on 2026-08-09: a session start
-// offset was added upstream (session begins ~150s into the epoch) which pushed
-// session end + confirmation ladder past the next tick, so the lock was never
-// released before the next tick checked it and EVERY tick skipped — mining sat
-// idle for over an hour reporting "succeeded". A lock whose release depends on
-// timers finishing inside one interval must not be able to outlive that
-// interval; anything older is stale by definition and gets reclaimed.
-const beeSessionInFlight = new Map<string, number>();
-
-// Generous: covers one full tick plus the confirmation ladder that trails it.
-// Only exists to break a deadlock, never to permit a genuine overlap.
-const BEE_SESSION_LOCK_MAX_MS = BEE_MINING_INTERVAL_MS * 2;
+const beeSessionInFlight = new Map<string, boolean>();
 
 // A busy chain must not permanently disable a miner. Only "active" miners are
 // picked up by the tick, so flipping to "error" on a transient QUEUE_OVERFLOW /
@@ -3473,26 +3459,11 @@ async function runBeeMiningTick() {
           // that regardless of how many local records point at it.
           minerAddress = current.minerAddress;
 
-          const lockedAt = beeSessionInFlight.get(minerAddress);
-
-          if (lockedAt != null) {
-            const heldMs = Date.now() - lockedAt;
-
-            if (heldMs < BEE_SESSION_LOCK_MAX_MS) {
-              console.log("Bee session skipped: previous session still settling on-chain:", {
-                walletName: current.walletName,
-                heldSeconds: Math.round(heldMs / 1000),
-              });
-              continue;
-            }
-
-            // Past the ceiling the release path is demonstrably not coming —
-            // keep mining rather than idling forever waiting on it.
-            console.warn("Bee session lock expired, reclaiming:", {
+          if (beeSessionInFlight.get(minerAddress)) {
+            console.log("Bee session skipped: previous session still settling on-chain:", {
               walletName: current.walletName,
-              heldSeconds: Math.round(heldMs / 1000),
             });
-            beeSessionInFlight.delete(minerAddress);
+            continue;
           }
 
           // Measured 2026-08-07: tap_sum hit the 12,000 cap and stayed pinned
@@ -3541,7 +3512,7 @@ async function runBeeMiningTick() {
           // two sessions land in one epoch and leaves the next one empty.
           // epochSlot makes that visible directly: two sessions sharing a slot,
           // or a slot with none, is the bug reproducing in the log.
-          beeSessionInFlight.set(minerAddress, Date.now());
+          beeSessionInFlight.set(minerAddress, true);
           const startedAt = new Date();
           const startSlot = Math.floor(startedAt.getTime() / BEE_EPOCH_MS);
 
@@ -3943,15 +3914,6 @@ const BEE_ENGINE_PULSE_MS = Math.max(
   500,
   Number(process.env.BEE_ENGINE_PULSE_MS || 1000),
 );
-// A real epoch is 1000 blocks ≈ 335s at the measured ~2.98 blocks/s. Anything
-// stale well past that means the contract's stored epoch is frozen because
-// nothing is touching it — not that the chain stopped. 15 minutes is roughly
-// three epochs: long enough never to fire during healthy mining, short enough
-// to recover quickly from a stall.
-const BEE_EPOCH_STALE_MAX_MS = Math.max(
-  60_000,
-  Number(process.env.BEE_EPOCH_STALE_MAX_SECONDS || 900) * 1000,
-);
 const BEE_RESET_POLL_MS = Math.max(
   5_000,
   Number(process.env.BEE_RESET_POLL_SECONDS || 10) * 1000,
@@ -4116,56 +4078,6 @@ function queueBeeEpochClaim(
   });
 }
 
-// The epoch boundary read straight off the chain's own clock: block height
-// rounded down to the 1000-block period (MinerRewardPeriod in Miner.sol).
-//
-// This is the field that must drive scheduling — NOT get_miner_data()'s
-// `epoch_5m_start`, which is a value STORED in the contract and only advanced
-// inside _updateEpoch during acceptTap/getReward. That stored field freezes
-// whenever mining stops, so gating "start a session when the epoch changes" on
-// it deadlocks: no session -> contract untouched -> epoch never moves -> no
-// session. Observed 2026-08-09: mining idle ~100 minutes with the stored epoch
-// stuck at 77269000 while the chain had advanced 16,000+ blocks.
-//
-// A reference miner's logs ("block epoch candidate 77264000 awaiting
-// confirmation; canonical=77263000" / "confirmed by matching block
-// observations") show it uses exactly this block-derived value, which is why
-// it never stalls. Verified against our own measurements: its epoch
-// transitions land 340s apart, matching the ~2.98 blocks/s we measured.
-const BEE_EPOCH_BLOCK_PERIOD = 1000;
-const ACKI_MAINNET_GRAPHQL_URL =
-  process.env.ACKI_MAINNET_GRAPHQL_URL || "https://mainnet.ackinacki.org/graphql";
-
-async function readChainEpoch5mStart(): Promise<string | null> {
-  try {
-    const res = await fetch(ACKI_MAINNET_GRAPHQL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: "{blockchain{blocks(last:1){edges{node{seq_no}}}}}",
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
-
-    const json: any = await res.json();
-    const seqNo = Number(
-      json?.data?.blockchain?.blocks?.edges?.[0]?.node?.seq_no,
-    );
-
-    if (!Number.isFinite(seqNo) || seqNo <= 0) {
-      return null;
-    }
-
-    return String(
-      Math.floor(seqNo / BEE_EPOCH_BLOCK_PERIOD) * BEE_EPOCH_BLOCK_PERIOD,
-    );
-  } catch {
-    // `pool timed out` is routine here; a skipped read just means the caller
-    // retries on the next pulse rather than acting on a guess.
-    return null;
-  }
-}
-
 async function observeBeeEpoch(
   miner: BeeMinerRecord,
   existingHandle?: BeeMinerHandle,
@@ -4194,22 +4106,11 @@ async function observeBeeEpoch(
       publicKey: miner.publicKey,
       secretKey: miner.secretKey,
     }));
-  const contractData = await beeReadMinerData(handle);
+  const data = await beeReadMinerData(handle);
 
-  if (!contractData) {
+  if (!data) {
     return null;
   }
-
-  // Take the epoch from the chain's block height, not from the contract's
-  // stored copy (see readChainEpoch5mStart above for why). Everything else —
-  // tapSum and the per-epoch tap quota — still comes from the contract, which
-  // is the authority for those. If the block read fails, fall back to the
-  // stored value rather than stalling: a stale epoch is still better than no
-  // decision, and the deadlock guard downstream covers the rest.
-  const chainEpoch5mStart = await readChainEpoch5mStart();
-  const data = chainEpoch5mStart
-    ? { ...contractData, epoch5mStart: chainEpoch5mStart }
-    : contractData;
 
   const previous =
     beeObservedEpoch5m.get(key) ?? miner.lastEpoch5mStart ?? null;
@@ -4339,7 +4240,6 @@ async function runBeeContinuousSession(miner: BeeMinerRecord): Promise<void> {
     return;
   }
   beeSessionRunning.add(key);
-  beeEnterChainCritical();
 
   try {
     const handle = await beeAcquireMiner({
@@ -4561,7 +4461,6 @@ async function runBeeContinuousSession(miner: BeeMinerRecord): Promise<void> {
   } finally {
     beeSubmissionSettling.delete(key);
     beeSessionRunning.delete(key);
-    beeLeaveChainCritical();
   }
 }
 
@@ -4644,33 +4543,9 @@ async function runBeeAutopilotPulse(): Promise<void> {
         ) {
           continue;
         }
-        // One session per epoch — but `epoch_5m_start` is a STORED contract
-        // field, not a clock. Miner.sol only advances it inside _updateEpoch,
-        // which runs during acceptTap/getReward. So it moves only when we
-        // touch the contract, and "wait for a new epoch before mining" is a
-        // deadlock the moment mining stops for any reason: nothing touches the
-        // contract, so the epoch never advances, so nothing ever starts.
-        // Observed 2026-08-09: mining sat idle 95 minutes with the recorded
-        // epoch frozen at 77269000 while the chain had moved on 16,582 blocks.
-        // Break the cycle by starting anyway once the epoch has been stale far
-        // longer than a real epoch could last (~335s at ~2.98 blocks/s).
-        const sameEpochAsLastSession =
+        if (
           beeSessionEpoch5m.get(key) === epoch.data.epoch5mStart ||
-          miner.lastSessionEpoch5mStart === epoch.data.epoch5mStart;
-
-        const epochStaleFor =
-          Date.now() - Date.parse(miner.lastEpoch5mChangedAt ?? miner.lastSessionAt ?? "");
-        const epochDeadlocked =
-          Number.isFinite(epochStaleFor) && epochStaleFor > BEE_EPOCH_STALE_MAX_MS;
-
-        if (sameEpochAsLastSession && epochDeadlocked) {
-          console.warn("Bee epoch stalled — forcing a session to advance it:", {
-            walletName: miner.walletName,
-            epoch5mStart: epoch.data.epoch5mStart,
-            staleSeconds: Math.round(epochStaleFor / 1000),
-          });
-        } else if (
-          sameEpochAsLastSession ||
+          miner.lastSessionEpoch5mStart === epoch.data.epoch5mStart ||
           beeClaimRunning.has(key) ||
           beePendingEpochClaims.has(key)
         ) {
@@ -6130,13 +6005,6 @@ export async function startBot(botToken: string) {
 
     record.status = "stopped";
     writeBeeMinerState(state);
-    if (record.minerAddress) {
-      beeDiscardMiner({
-        appId: record.appId,
-        minerAddress: record.minerAddress,
-        publicKey: record.publicKey,
-      });
-    }
 
     await ctx.reply(`⏹️ ${walletName} için otomatik madencilik durduruldu.`);
   });

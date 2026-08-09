@@ -476,7 +476,7 @@ type AckiWalletResolution = {
 };
 
 type AckiWalletActivity = {
-  source: "acki-mainnet-graphql";
+  source: "acki-mainnet-graphql" | "acki-mainnet-graphql-popit-only";
   input: string;
   inputType: "address" | "name";
   name: string | null;

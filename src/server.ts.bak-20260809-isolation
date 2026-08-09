@@ -8,9 +8,7 @@ import { getAckiNetworkStats, getAckiWalletActivity } from "./services/ackiProvi
 import {
   collectReward as beeCollectReward,
   createMiner as beeCreateMiner,
-  discardMiner as beeDiscardMiner,
   generateMiningKeys as beeGenerateMiningKeys,
-  isBeeChainCritical,
   resolveMinerAddress as beeResolveMinerAddress,
   waitForMiningKeyPropagation as beeWaitForMiningKeyPropagation,
 } from "./services/beeMiner";
@@ -959,7 +957,6 @@ const rewardFeed = new Map<string, RewardTick[]>(
 const rewardLastTotal = new Map<string, number>(
   Object.entries(storedRewardFeedState.lastTotals),
 );
-const rewardLastChainReadAt = new Map<string, string>();
 let rewardFeedPollInFlight = false;
 
 function writeRewardFeedState(): void {
@@ -1039,12 +1036,8 @@ function readMiningWatchesForRewards(): Map<string, string> {
 
 async function pollRewardFeed(): Promise<void> {
   const miners = readBeeMinerState().miners.filter(
-    (m) => m.status === "active",
+    (m) => m.status === "active" || m.status === "stopped",
   );
-
-  if (isBeeChainCritical()) {
-    return;
-  }
 
   const watches = readMiningWatchesForRewards();
 
@@ -1060,8 +1053,6 @@ async function pollRewardFeed(): Promise<void> {
     if (total == null) {
       continue;
     }
-
-    rewardLastChainReadAt.set(miner.walletName, new Date().toISOString());
 
     const previous = rewardLastTotal.get(miner.walletName);
     rewardLastTotal.set(miner.walletName, total);
@@ -1737,7 +1728,6 @@ app.use(express.static(path.join(process.cwd(), "public")));
         sessionEpoch5mStart: miner.lastSessionEpoch5mStart ?? null,
         sessionEpochStatus: miner.lastSessionEpochStatus ?? null,
         claimedEpoch5mStart: miner.lastClaimedEpoch5mStart ?? null,
-        rewardLastChainReadAt: rewardLastChainReadAt.get(miner.walletName) ?? null,
       }));
 
     const subscription = paymentsState.subscriptions[String(chatId)] || null;
@@ -1808,13 +1798,6 @@ app.use(express.static(path.join(process.cwd(), "public")));
     record.status = shouldRun ? "active" : "stopped";
     record.lastError = null;
     writeBeeMinerState(state);
-    if (!shouldRun && record.minerAddress) {
-      beeDiscardMiner({
-        appId: record.appId,
-        minerAddress: record.minerAddress,
-        publicKey: record.publicKey,
-      });
-    }
 
     console.log("Dashboard miner state changed:", {
       walletName: record.walletName,

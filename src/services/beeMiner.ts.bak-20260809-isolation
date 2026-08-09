@@ -197,22 +197,6 @@ export async function createMiner(params: {
 // in-flight submissions off, which is what ~28% of sessions look like: taps
 // sent, no error reported, nothing on chain.
 const minerPool = new Map<string, BeeMinerHandle>();
-// Low-priority dashboard and wallet readers share this process with Bee. This
-// process-wide marker lets them stand down during a session/claim without
-// disabling either product for the rest of the epoch.
-let chainCriticalCount = 0;
-
-export function enterBeeChainCritical(): void {
-  chainCriticalCount += 1;
-}
-
-export function leaveBeeChainCritical(): void {
-  chainCriticalCount = Math.max(0, chainCriticalCount - 1);
-}
-
-export function isBeeChainCritical(): boolean {
-  return chainCriticalCount > 0;
-}
 
 function minerPoolKey(params: {
   appId: string;

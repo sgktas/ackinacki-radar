@@ -5,14 +5,16 @@ if (tg) {
   tg.expand();
 }
 
-const urlParams = new URLSearchParams(window.location.search);
-const queryUserId = urlParams.get("userId");
 const telegramUserId =
   tg && tg.initDataUnsafe && tg.initDataUnsafe.user
     ? tg.initDataUnsafe.user.id
     : null;
+const telegramInitData = tg && typeof tg.initData === "string" ? tg.initData : "";
 
-const currentUserId = queryUserId || telegramUserId;
+// initDataUnsafe is useful for rendering but cannot authorize a request. The
+// API independently verifies telegramInitData before returning or mutating
+// account-specific data. Do not accept a user id from the URL.
+const currentUserId = telegramUserId;
 
 let appState = {
   user: null,
@@ -24,7 +26,16 @@ let appState = {
   wallet: null,
 };
 async function fetchJson(url, options) {
-  const res = await fetch(url, options);
+  const requestOptions = { ...(options || {}) };
+  const headers = { ...(options && options.headers ? options.headers : {}) };
+
+  if (telegramInitData) {
+    headers["X-Telegram-Init-Data"] = telegramInitData;
+  }
+
+  requestOptions.headers = headers;
+
+  const res = await fetch(url, requestOptions);
 
   if (!res.ok) {
     throw new Error("API hatası: " + res.status);
@@ -593,7 +604,7 @@ async function reloadData() {
   if (!currentUserId) {
     setText(
       "referral",
-      "Telegram içinden açılmadı. Test için URL sonuna ?userId=TELEGRAM_ID ekle."
+      "Telegram içinden açılmadı. Profil ve questler yalnızca doğrulanmış Telegram oturumunda kullanılabilir."
     );
     return;
   }
