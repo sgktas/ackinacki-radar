@@ -8028,7 +8028,13 @@ export async function startBot(botToken: string) {
         id: `nackl:${chatId}:${plan.id}:${now}`,
         chatId,
         planId: plan.id,
-        amountRaw: allocateNacklInvoiceAmountRaw(plan, state),
+        // The admin-only test invoice is deliberately exactly 1 NACKL so it
+        // can be exercised by an almost-empty wallet. Public plans retain the
+        // unique fractional marker used for automatic matching.
+        amountRaw:
+          plan.id === TEST_PLAN.id
+            ? plan.priceNacklRaw
+            : allocateNacklInvoiceAmountRaw(plan, state),
         createdAt: new Date(now).toISOString(),
         expiresAt: new Date(now + NACKL_INVOICE_EXPIRY_MS).toISOString(),
         currency: "nackl",
