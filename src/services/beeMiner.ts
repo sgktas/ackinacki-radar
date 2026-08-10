@@ -273,6 +273,16 @@ export type MinerEventSummary = {
   sawSubmitRoot: boolean;
   sawSubmitProof: boolean;
   sawSessionAccepted: boolean;
+  // Added 2026-08-10 while root-causing the ~18% session loss. The wasm binary
+  // shows the SDK emits `session_rejected` alongside a `SessionRejectedData`
+  // payload, and statuses `queued|computing|submitting|finished` — none of
+  // which this summary surfaced, so a rejected session was indistinguishable
+  // from one that merely went quiet.
+  sawSessionRejected: boolean;
+  statuses: string[];
+  // Verbatim events, kept only when something went wrong, so the log gets the
+  // SDK's own words instead of our lossy reading of them.
+  rawOnError: string[];
 };
 
 // Events arrive as JSON strings shaped { action, data: { status }, error }.
@@ -281,6 +291,8 @@ export type MinerEventSummary = {
 export function summarizeMinerEvents(events: any[]): MinerEventSummary {
   const actions: string[] = [];
   const errors: string[] = [];
+  const statuses: string[] = [];
+  const rawStrings: string[] = [];
 
   for (const raw of events) {
     try {
@@ -293,18 +305,36 @@ export function summarizeMinerEvents(events: any[]): MinerEventSummary {
       if (parsed?.error) {
         errors.push(String(parsed.error));
       }
+
+      // `data` was parsed and dropped until now. It is where the SDK puts the
+      // status, and — on a rejection — the reason.
+      if (parsed?.data?.status) {
+        statuses.push(String(parsed.data.status));
+      }
+
+      rawStrings.push(
+        typeof raw === "string" ? raw : JSON.stringify(raw ?? null),
+      );
     } catch {
       // Non-JSON messages are not interesting but must not throw.
     }
   }
 
+  const sawSessionRejected = actions.includes("session_rejected");
+
   return {
     count: events.length,
     actions,
     errors,
+    statuses,
     sawSubmitRoot: actions.includes("submit_session_root"),
     sawSubmitProof: actions.includes("submit_session_proof"),
     sawSessionAccepted: actions.includes("session_accepted"),
+    sawSessionRejected,
+    // Bounded on purpose: this fires on roughly one session in five, and the
+    // out log is already millions of lines.
+    rawOnError:
+      errors.length || sawSessionRejected ? rawStrings.slice(0, 8) : [],
   };
 }
 

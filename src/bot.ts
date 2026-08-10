@@ -1,4 +1,5 @@
 import { Telegraf, Markup } from "telegraf";
+import { message } from "telegraf/filters";
 import { makeQrGifBuffer } from "./services/qr.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -12,10 +13,24 @@ import {
 import {
   buildInvoiceAmountRaw,
   getPlanById,
+  getPlanStars,
   PLANS,
   SHELL_DECIMALS,
+  TEST_PLAN,
+  TRIAL_DAYS,
   type Plan,
 } from "./services/payments";
+import {
+  buildInvoiceCode,
+  extractInvoiceCode,
+  fetchIncomingPayments,
+  fetchTonUsdRate,
+  formatPayAmount,
+  formatTonAmount,
+  formatUsdtAmount,
+  usdToTonRaw,
+  usdtAmountToRaw,
+} from "./services/tonPayments";
 import {
   collectReward as beeCollectReward,
   canStartMining as beeCanStartMining,
@@ -155,6 +170,13 @@ const MINING_MONITOR_MAX_WALLETS_PER_CHAT = 15;
 const MINING_MONITOR_ENABLED =
   String(process.env.MINING_MONITOR_ENABLED || "true").toLowerCase() !==
   "false";
+// Scanning and notifying are separate switches on purpose.  The wallet scan
+// also feeds the public site's radar stats (server.ts getRadarMiningStats reads
+// data/mining-monitor.json), so turning notifications off must not stop the
+// scan or the homepage numbers freeze.
+const MINING_MONITOR_NOTIFY_ENABLED =
+  String(process.env.MINING_MONITOR_NOTIFY_ENABLED || "true").toLowerCase() !==
+  "false";
 const MINING_MONITOR_SOURCE_LABEL = "PopitGame locked NACKL";
 const MINING_SUMMARY_ENABLED =
   String(process.env.MINING_SUMMARY_ENABLED || "true").toLowerCase() !==
@@ -182,7 +204,25 @@ const BOT_ADMIN_IDS = new Set(
     .filter(Boolean),
 );
 
+// Admins bypass the subscription gate and the one-wallet-per-plan rule, which
+// makes it impossible for the operator to see what a paying user actually
+// experiences. /testmode suspends those privileges for their own chat.
+//
+// Deliberately in memory only: a restart restores admin rights, so a mistake
+// here can never lock anyone out of the admin commands.
+const adminTestMode = new Set<number>();
+
+// Ignores the toggle. Used by /testmode itself and by the 1-star test plan, so
+// turning privileges off cannot strand the operator without a way back.
+function isRealAdminChatId(chatId: number): boolean {
+  return BOT_ADMIN_IDS.has(String(chatId));
+}
+
 function isAdminChatId(chatId: number): boolean {
+  if (adminTestMode.has(chatId)) {
+    return false;
+  }
+
   return BOT_ADMIN_IDS.has(String(chatId));
 }
 
@@ -417,11 +457,23 @@ type PendingInvoice = {
   amountRaw: string;
   createdAt: string;
   expiresAt: string;
+  // TON-rail invoices carry a code the payer puts in the transfer comment.
+  // Absent on legacy SHELL invoices, which are matched by exact amount.
+  code?: string;
+  currency?: "shell" | "usdt";
+  // One invoice, either currency: `amountRaw` is the USDT price and
+  // `amountTonRaw` the TON equivalent locked at creation time. TON is absent
+  // when the rate lookup failed, in which case only USDT is accepted.
+  amountTonRaw?: string;
+  tonUsdRate?: number;
 };
 
 type Subscription = {
   planId: PlanId2;
   activeUntil: string;
+  // Set on a trial so a second one can never be granted, even after it lapses
+  // and the record is later overwritten by a paid plan.
+  trial?: boolean;
 };
 
 type PaymentsState = {
@@ -429,6 +481,16 @@ type PaymentsState = {
   pendingInvoices: PendingInvoice[];
   subscriptions: Record<string, Subscription>;
   seenMessageIds: string[];
+  // chatIds that have ever taken the free trial. Kept separately from
+  // `subscriptions` because that record gets overwritten by a later purchase,
+  // which would otherwise hand the same person a second trial.
+  trialUsed?: number[];
+  // Telegram payment charge ids already credited, so a replayed
+  // successful_payment update cannot extend a subscription twice.
+  starsCharges?: string[];
+  // Highest TON logical time already processed. `lt` is monotonic per account,
+  // so it is a reliable cursor: everything at or below it has been handled.
+  tonLastLt?: number;
 };
 
 // Local alias so this file doesn't need a type-only import cycle concern —
@@ -458,7 +520,46 @@ function readPaymentsState(): PaymentsState {
       ? parsed.subscriptions
       : {},
     seenMessageIds: Array.isArray(parsed?.seenMessageIds) ? parsed.seenMessageIds : [],
+    tonLastLt: Number.isFinite(Number(parsed?.tonLastLt))
+      ? Number(parsed.tonLastLt)
+      : 0,
+    trialUsed: Array.isArray(parsed?.trialUsed) ? parsed.trialUsed : [],
+    starsCharges: Array.isArray(parsed?.starsCharges) ? parsed.starsCharges : [],
   };
+}
+
+// Plans that a Stars invoice may have been issued for. Wider than
+// getPlanById because the admin-only test plan is kept out of PLANS: once an
+// invoice exists, both the pre-checkout answer and the crediting step have to
+// recognise it, or the payment is taken and never honoured.
+function resolvePaidPlan(planId: string): Plan | undefined {
+  return planId === TEST_PLAN.id ? TEST_PLAN : getPlanById(planId);
+}
+
+// Shared by every rail (Stars, TON, trial): extend from the later of now and
+// any remaining time, so buying early adds days instead of discarding them.
+function grantSubscription(
+  state: PaymentsState,
+  chatId: number,
+  planId: PlanId2,
+  days: number,
+  options: { trial?: boolean } = {},
+): string {
+  const now = Date.now();
+  const existing = state.subscriptions[String(chatId)];
+  const base =
+    existing && new Date(existing.activeUntil).getTime() > now
+      ? new Date(existing.activeUntil).getTime()
+      : now;
+  const activeUntil = new Date(base + days * 24 * 60 * 60 * 1000).toISOString();
+
+  state.subscriptions[String(chatId)] = {
+    planId,
+    activeUntil,
+    ...(options.trial ? { trial: true } : {}),
+  };
+
+  return activeUntil;
 }
 
 function writePaymentsState(state: PaymentsState) {
@@ -480,6 +581,11 @@ function hasActiveSubscriptionForChat(
 const PAYMENTS_WALLET_NAME =
   process.env.PAYMENTS_WALLET_NAME || "ackinackiradarpayments";
 const PAYMENTS_INVOICE_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes to pay
+// Longer than the SHELL window: a TON payer may have to fund or top up a
+// wallet first, and the invoice code makes a stale invoice harmless anyway
+// (it is dropped on expiry, so it cannot be redeemed later).
+const TON_INVOICE_EXPIRY_MS =
+  Number(process.env.TON_INVOICE_EXPIRY_MINUTES || 120) * 60 * 1000;
 
 function allocateInvoiceAmountRaw(plan: Plan, state: PaymentsState): string {
   const usedAmounts = new Set(
@@ -1377,7 +1483,21 @@ function isAdminContext(ctx: any) {
     return false;
   }
 
+  // Respects /testmode, so an operator testing as a normal user also loses the
+  // admin commands — otherwise "test mode" would only be half true.
+  if (adminTestMode.has(Number(telegramId))) {
+    return false;
+  }
+
   return BOT_ADMIN_IDS.has(String(telegramId));
+}
+
+// Ignores /testmode. Only for the few things that must keep working while
+// privileges are suspended: the toggle itself and the 1-star test plan.
+function isRealAdminContext(ctx: any) {
+  const telegramId = ctx?.from?.id;
+
+  return Boolean(telegramId) && BOT_ADMIN_IDS.has(String(telegramId));
 }
 
 async function replyAdminOnly(ctx: any) {
@@ -1616,13 +1736,15 @@ function getMiningSummaryLinesForWatch(watch: MiningWatchRecord) {
   const weekRaw = sumMiningWindow(watch, now - 7 * 24 * 60 * 60 * 1000);
   const monthRaw = sumMiningWindow(watch, now - 30 * 24 * 60 * 60 * 1000);
 
+  // Turkish to match the rest of the bot — this used to sit inside an
+  // all-English screen that no longer exists.
   return [
     `👤 ${safeMessageText(watch.label)}`,
-    `CURRENT: ${formatRawNackl(watch.lastLockedRaw)} NACKL`,
-    `HOURLY: ${formatSummaryDelta(hourRaw)}`,
-    `DAILY: ${formatSummaryDelta(dayRaw)}`,
-    `WEEKLY: ${formatSummaryDelta(weekRaw)}`,
-    `MONTHLY: ${formatSummaryDelta(monthRaw)}`,
+    `Toplam: ${formatRawNackl(watch.lastLockedRaw)} NACKL`,
+    `Son 1 saat: ${formatSummaryDelta(hourRaw)}`,
+    `Bugün: ${formatSummaryDelta(dayRaw)}`,
+    `Hafta: ${formatSummaryDelta(weekRaw)}`,
+    `Ay: ${formatSummaryDelta(monthRaw)}`,
   ];
 }
 
@@ -1693,7 +1815,9 @@ function buildMiningSummaryMessage(watch: MiningWatchRecord) {
     "💰 Mining Status",
     "",
     `Tracking: 1/${MINING_MONITOR_MAX_WALLETS_PER_CHAT} wallets`,
-    `Summary: every ${MINING_SUMMARY_INTERVAL_MINUTES} ${MINING_SUMMARY_INTERVAL_MINUTES === 1 ? "minute" : "minutes"}`,
+    MINING_SUMMARY_ENABLED
+      ? `Summary: every ${MINING_SUMMARY_INTERVAL_MINUTES} ${MINING_SUMMARY_INTERVAL_MINUTES === 1 ? "minute" : "minutes"}`
+      : "Summary: paused",
     "",
     ...getMiningSummaryLinesForWatch(watch),
     "",
@@ -1701,56 +1825,130 @@ function buildMiningSummaryMessage(watch: MiningWatchRecord) {
   ].join("\n");
 }
 
+// Rewritten 2026-08-10 for the cloud-mining model. The old version was built
+// for the wallet-watch product that no longer exists: it counted a per-chat
+// wallet quota (/watch is gone) and advertised an hourly digest (switched off).
+//
+// It also filtered watches by chatId, which quietly broke for every new user:
+// a connected mining wallet is now registered as a SYSTEM record (chatId 0), so
+// the caller's own wallet would never be found and the screen would claim they
+// had none. Wallets are therefore resolved through the miner records, and the
+// reward history is looked up by wallet name regardless of who registered it.
 function buildMiningSummaryStatusMessage(
   chatId?: number,
   options: { pushOnly?: boolean } = {},
 ) {
   const state = readMiningMonitorState();
-  const watches =
+  const miners =
+    typeof chatId === "number"
+      ? readBeeMinerState().miners.filter((miner) => miner.chatId === chatId)
+      : readBeeMinerState().miners;
+
+  const findWatch = (walletName: string) =>
+    state.watches.find(
+      (watch) =>
+        String(watch.label || "").toLowerCase() === walletName.toLowerCase(),
+    );
+
+  // Legacy watches the user added back when /watch existed still belong to them.
+  const ownWatches =
     typeof chatId === "number"
       ? state.watches.filter((watch) => watch.chatId === chatId)
-      : state.watches;
-  const visibleWatches = options.pushOnly
-    ? watches.filter((watch) => isMiningWatchNotificationEnabled(watch))
-    : watches;
+      : [];
 
-  if (!visibleWatches.length) {
-    return [
-      "💰 Mining Status",
-      "",
-      `Tracking: ${watches.length}/${MINING_MONITOR_MAX_WALLETS_PER_CHAT} wallets`,
-      `Summary: every ${MINING_SUMMARY_INTERVAL_MINUTES} ${MINING_SUMMARY_INTERVAL_MINUTES === 1 ? "minute" : "minutes"}`,
-      "",
-      watches.length
-        ? "Notifications are disabled for all tracked wallets."
-        : "No wallet is being monitored yet.",
-      "",
-      "Add one with:",
-      "/watch ackerman",
-    ].join("\n");
-  }
+  const lines: string[] = ["📊 Durum", ""];
 
-  const lines: string[] = [
-    "💰 Mining Status",
-    "",
-    `Tracking: ${watches.length}/${MINING_MONITOR_MAX_WALLETS_PER_CHAT} wallets`,
-    `Summary: every ${MINING_SUMMARY_INTERVAL_MINUTES} ${MINING_SUMMARY_INTERVAL_MINUTES === 1 ? "minute" : "minutes"}`,
-    "",
-  ];
+  if (typeof chatId === "number") {
+    const subscription = readPaymentsState().subscriptions[String(chatId)];
+    const activeUntilMs = subscription
+      ? new Date(subscription.activeUntil).getTime()
+      : 0;
 
-  visibleWatches.forEach((watch, index) => {
-    if (index > 0) {
-      lines.push("");
+    if (activeUntilMs > Date.now()) {
+      const daysLeft = Math.max(
+        1,
+        Math.ceil((activeUntilMs - Date.now()) / (24 * 60 * 60 * 1000)),
+      );
+      lines.push(
+        `💎 Abonelik: ${subscription!.planId}${subscription!.trial ? " (deneme)" : ""} — ${daysLeft} gün kaldı`,
+      );
+    } else {
+      lines.push(
+        `💎 Aboneliğin yok — ${TRIAL_DAYS} gün ücretsiz denemek için /trial`,
+      );
     }
 
-    lines.push(...getMiningSummaryLinesForWatch(watch));
-  });
-
-  if (visibleWatches.length > 1) {
-    lines.push("", ...getMiningSummaryTotalsLines(visibleWatches));
+    lines.push("");
   }
 
-  lines.push("", `Updated: ${getMiningSummaryUpdatedText(visibleWatches)}`);
+  if (!miners.length && !ownWatches.length) {
+    lines.push(
+      "Bağlı madencilik cüzdanın yok.",
+      "",
+      "1) /miner_connect <cüzdan adı>",
+      "2) /miner_check",
+      "3) /miner_start",
+    );
+
+    return lines.join("\n");
+  }
+
+  const ago = (iso?: string | null) => {
+    const ms = iso ? Date.now() - Date.parse(iso) : NaN;
+
+    if (!Number.isFinite(ms) || ms < 0) return "—";
+    if (ms < 60_000) return "az önce";
+
+    return `${Math.round(ms / 60000)} dk önce`;
+  };
+
+  for (const miner of miners) {
+    lines.push(`⛏️ ${safeMessageText(miner.walletName)} — ${miner.status}`);
+
+    if (typeof miner.lastTapSum === "number") {
+      const pct = Math.min(
+        100,
+        Math.round((miner.lastTapSum / BEE_CYCLE_TAP_CAP) * 100),
+      );
+      lines.push(
+        `Döngü: ${miner.lastTapSum.toLocaleString("tr-TR")} / ${BEE_CYCLE_TAP_CAP.toLocaleString("tr-TR")} tap (%${pct})`,
+      );
+    }
+
+    lines.push(
+      `Son oturum: ${ago(miner.lastSessionAt)} · Son ödül: ${ago(miner.lastRewardAt)}`,
+    );
+
+    const watch = findWatch(miner.walletName);
+
+    if (watch) {
+      // Reuse the existing reward aggregates; only the framing changed.
+      lines.push(...getMiningSummaryLinesForWatch(watch).slice(1));
+    }
+
+    lines.push("");
+  }
+
+  // Wallets the user watches but does not mine with — kept so nobody's old
+  // records silently vanish from view.
+  const extraWatches = ownWatches.filter(
+    (watch) =>
+      !miners.some(
+        (miner) =>
+          miner.walletName.toLowerCase() ===
+          String(watch.label || "").toLowerCase(),
+      ),
+  );
+
+  const visibleExtra = options.pushOnly
+    ? extraWatches.filter((watch) => isMiningWatchNotificationEnabled(watch))
+    : extraWatches;
+
+  for (const watch of visibleExtra) {
+    lines.push(...getMiningSummaryLinesForWatch(watch), "");
+  }
+
+  lines.push("🌐 Detaylı takip: ackinackiradar.com");
 
   return lines.join("\n");
 }
@@ -1918,14 +2116,97 @@ function findUserByTelegramId(telegramId: number) {
   return users.find((user) => user.telegramId === telegramId);
 }
 
+// Labels double as the router: a reply-keyboard tap arrives as a plain text
+// message, so the constants are matched with bot.hears further down. Changing
+// one here without changing the handler silently breaks that button.
+// English, like the rest of the bot's surface: the user base is mostly outside
+// Turkey (svetka, ijeoma, jharyono, alifahri77 …), and a Turkish-only menu
+// would be unreadable to most of them.
+// Sent verbatim with force_reply and compared verbatim when the answer comes
+// back, so the two must stay identical — hence a constant, not a literal.
+const WALLET_ADD_PROMPT = "Send the Acki Nacki wallet name you want to connect:";
+
+const MENU_PLANS = "⭐ Pay with Stars";
+const MENU_WALLETS = "👛 Wallets";
+const MENU_PANEL = "🌐 Dashboard";
+const MENU_HELP = "ℹ️ Help";
+
+// The bot's one job is selling with Telegram Stars. Mining management, wallet
+// lookup and status all live on the dashboard, which already has the endpoints
+// (miner connect/check/start/stop) and the UI for them. Keeping second copies
+// here meant two surfaces to maintain and two to drift apart.
+// Wallets screen, button-driven rather than a list of commands to retype.
+// Two separate bars on purpose: one row per wallet for control (pause/resume
+// and remove), and a bar of its own for adding — mixing them is how you end up
+// deleting a wallet you meant to start.
+//
+// Callback data uses an "mn:" prefix, NOT "mw:": that older prefix belonged to
+// the removed wallet-watch UI and is now swallowed by a catch-all handler that
+// answers "this feature was removed".
+function buildWalletsKeyboard(miners: BeeMinerRecord[]) {
+  // Typed loosely on purpose: the rows mix callback buttons with a url button,
+  // and inference from the first rows would lock the array to callbacks only.
+  const rows: any[][] = miners.map((miner) => {
+    const running = miner.status === "active";
+
+    return [
+      Markup.button.callback(
+        `${running ? "⏸" : "▶️"} ${miner.walletName}`,
+        `mn:tg:${miner.walletName}`,
+      ),
+      Markup.button.callback("🗑", `mn:rm:${miner.walletName}`),
+    ];
+  });
+
+  rows.push([Markup.button.callback("➕ Add wallet", "mn:add")]);
+  rows.push([Markup.button.url("🌐 Dashboard", "https://ackinackiradar.com")]);
+
+  return Markup.inlineKeyboard(rows);
+}
+
+function buildWalletsText(miners: BeeMinerRecord[]) {
+  if (!miners.length) {
+    return [
+      "👛 Your wallets (0)",
+      "",
+      "No wallet connected yet. Press “Add wallet” to start.",
+    ].join("\n");
+  }
+
+  return [
+    `👛 Your wallets (${miners.length})`,
+    "",
+    ...miners.map(
+      (miner) => `• ${safeMessageText(miner.walletName)} — ${miner.status}`,
+    ),
+    "",
+    "▶️/⏸ start or pause · 🗑 remove (deletes the stored keys)",
+  ].join("\n");
+}
+
+async function sendWalletsScreen(ctx: any) {
+  const chatId = ctx.chat?.id;
+  const miners = chatId
+    ? readBeeMinerState().miners.filter((m) => m.chatId === chatId)
+    : [];
+
+  await ctx.reply(buildWalletsText(miners), buildWalletsKeyboard(miners));
+}
+
+function buildMainKeyboard() {
+  return Markup.keyboard([
+    [MENU_PLANS],
+    [MENU_WALLETS],
+    [MENU_PANEL, MENU_HELP],
+  ]).resize();
+}
+
 function buildMainMenu() {
   const buttons = [
     [
       Markup.button.url("🌐 Dashboard", "https://ackinackiradar.com"),
     ],
     [Markup.button.callback("🔍 Wallet Info", "wallet_info")],
-    [Markup.button.callback("⛏️ Watch Mining", "mining_watch_prompt")],
-    [Markup.button.callback("👛 Wallets", "wallets")],
     [Markup.button.callback("ℹ️ Help", "help")],
   ];
 
@@ -1936,7 +2217,7 @@ function buildWelcomeMessage() {
   return [
     "📡 Welcome to Acki Nacki Radar",
     "",
-    "Wallet insights, NACKL balances, MBI levels and mining monitor.",
+    "Wallet insights, NACKL balances, MBI levels and wallet scanning.",
     "",
     "Built by Web3Hunter.",
     "Not official.",
@@ -1956,15 +2237,10 @@ function buildHelpMessage() {
     "/info ackerman",
     "Show wallet radar instantly.",
     "You can query multiple wallets in one message.",
+    "A wallet you look up joins the radar automatically.",
     "",
-    "/watch ackerman",
-    "Start monitoring a wallet.",
-    "",
-    "/unwatch ackerman",
-    "Stop monitoring a wallet.",
-    "",
-    "/wallets",
-    "Show your monitored wallets.",
+    "/forget ackerman",
+    "Delete a wallet record. Run it with no name to list yours.",
     "",
     "/status",
     "Show mining summary.",
@@ -1992,7 +2268,7 @@ function buildWalletInfoPrompt() {
 
 function buildMiningWatchPrompt() {
   return [
-    "⛏️ Mining Monitor",
+    "⛏️ Wallet Scan",
     "",
     "Track a wallet and get a message when locked NACKL changes.",
     `Limit: ${MINING_MONITOR_MAX_WALLETS_PER_CHAT} wallets per account`,
@@ -2167,9 +2443,196 @@ function buildWalletInfoUsageMessage() {
 // Shared by the /info command's single-wallet path and the website search
 // box's /start?start=info_<input> deep link (see bot.start below) — same
 // lookup, same error copy, one place to keep them in sync.
+// Wallets join the radar by being used, not by being subscribed to. /info
+// lookups and cloud-mining connections both land here.
+//
+// These are SYSTEM records, not owned by whoever ran the lookup: /info can be
+// pointed at anyone's wallet, so filing it under the caller's chatId would put
+// strangers' wallets in their list and burn their per-chat quota. chatId 0 has
+// no chat to notify, and notificationsEnabled:false keeps it out of every
+// notify path even if notifications are switched back on.
+const SYSTEM_WATCH_CHAT_ID = 0;
+const MINING_MONITOR_MAX_SYSTEM_WATCHES_RAW = Number(
+  process.env.MINING_MONITOR_MAX_SYSTEM_WATCHES || 2000,
+);
+// The state file is already ~7.5MB and gets parsed on every tick, so growth
+// driven by arbitrary lookups needs a ceiling rather than none at all.
+const MINING_MONITOR_MAX_SYSTEM_WATCHES = Number.isFinite(
+  MINING_MONITOR_MAX_SYSTEM_WATCHES_RAW,
+)
+  ? Math.max(0, Math.floor(MINING_MONITOR_MAX_SYSTEM_WATCHES_RAW))
+  : 2000;
+
+function registerSystemMiningWatch(wallet: any): "added" | "exists" | "skipped" {
+  try {
+    const address = String(wallet?.address || "").trim();
+    const popitGameAddress = wallet?.popitGame?.address || null;
+
+    // Without a PopitGame account there is nothing for the scan to read.
+    if (!address || !popitGameAddress) {
+      return "skipped";
+    }
+
+    const state = readMiningMonitorState();
+    const addressKey = address.toLowerCase();
+
+    // Already scanned under ANY chat — a second copy would only double the
+    // reads for the same source.
+    if (
+      state.watches.some(
+        (watch) => String(watch.address || "").toLowerCase() === addressKey,
+      )
+    ) {
+      return "exists";
+    }
+
+    const systemCount = state.watches.filter(
+      (watch) => watch.chatId === SYSTEM_WATCH_CHAT_ID,
+    ).length;
+
+    if (systemCount >= MINING_MONITOR_MAX_SYSTEM_WATCHES) {
+      return "skipped";
+    }
+
+    const now = new Date().toISOString();
+    const lockedRaw = getLockedNacklRawForMonitor(wallet);
+    const label = String(wallet?.name || address);
+
+    state.watches.push({
+      id: `${SYSTEM_WATCH_CHAT_ID}:${address}`,
+      chatId: SYSTEM_WATCH_CHAT_ID,
+      input: label,
+      label,
+      address,
+      popitGameAddress,
+      lastLockedRaw: lockedRaw,
+      lastTransactionLt: getPopitLastTransactionLt(wallet),
+      lastMonitorSourceKey: getPopitMonitorSourceKey(wallet, lockedRaw),
+      lastActivityAt: wallet?.popitGame?.lastPaid || wallet?.lastPaid || null,
+      createdAt: now,
+      lastCheckedAt: now,
+      notificationsEnabled: false,
+      lastSourceStatus: "ok",
+      lastSourceError: undefined,
+      events: [],
+      dailyTotals: [],
+    });
+
+    writeMiningMonitorState(state);
+    console.log("Wallet joined radar from lookup:", {
+      label,
+      address,
+      systemWatches: systemCount + 1,
+    });
+
+    return "added";
+  } catch (error) {
+    // Registration is a side effect of a lookup — it must never break the
+    // reply the user actually asked for.
+    console.warn("System wallet registration failed:", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return "skipped";
+  }
+}
+
+// Deletion survived the /wallets teardown as its own command: a user must be
+// able to get their wallet out of our data even though there is no management
+// UI any more.  With no argument it lists what the caller actually has, since
+// otherwise there is no way to know what there is to delete.
+//
+// A plain user can only delete their OWN records. System records (the ones
+// /info lookups create) are shared radar data that feeds the public site, so
+// letting anyone drop them would let one person quietly shrink everyone's
+// stats — those are admin-only.
+async function replyForgetWallet(ctx: any) {
+  const chatId = ctx.chat?.id;
+
+  if (!chatId) {
+    await ctx.reply("Chat bilgisi alınamadı.");
+    return;
+  }
+
+  const input = normalizeMiningInput(getCommandArgument(ctx.message?.text));
+  const isAdmin = isAdminContext(ctx);
+  const state = readMiningMonitorState();
+  const owned = state.watches.filter((watch) => watch.chatId === chatId);
+
+  if (!input) {
+    if (!owned.length) {
+      await ctx.reply(
+        [
+          "🗑️ Cüzdan kaydı silme",
+          "",
+          "Bu sohbete ait kayıtlı cüzdan yok.",
+        ].join("\n"),
+      );
+      return;
+    }
+
+    await ctx.reply(
+      [
+        "🗑️ Cüzdan kaydı silme",
+        "",
+        "Kayıtlı cüzdanların:",
+        ...owned.map((watch) => `• ${watch.label || watch.input}`),
+        "",
+        "Silmek için: /forget ackerman",
+        "Hepsini silmek için: /forget all",
+      ].join("\n"),
+    );
+    return;
+  }
+
+  const before = state.watches.length;
+
+  if (input.toLowerCase() === "all") {
+    state.watches = state.watches.filter((watch) => watch.chatId !== chatId);
+    writeMiningMonitorState(state);
+    await ctx.reply(
+      `Bu sohbete ait ${before - state.watches.length} cüzdan kaydı silindi.`,
+    );
+    return;
+  }
+
+  const normalizedInput = input.toLowerCase();
+  const matches = (watch: MiningWatchRecord) =>
+    watch.input.toLowerCase() === normalizedInput ||
+    watch.label.toLowerCase() === normalizedInput ||
+    watch.address.toLowerCase() === normalizedInput ||
+    watch.address.toLowerCase() === `0:${normalizedInput}`;
+
+  state.watches = state.watches.filter((watch) => {
+    const deletable =
+      watch.chatId === chatId ||
+      (isAdmin && watch.chatId === SYSTEM_WATCH_CHAT_ID);
+
+    if (!deletable) return true;
+
+    return !matches(watch);
+  });
+
+  const removed = before - state.watches.length;
+
+  if (!removed) {
+    await ctx.reply(
+      [
+        `"${input}" için kayıt bulunamadı.`,
+        "",
+        "Kayıtlarını görmek için argümansız: /forget",
+      ].join("\n"),
+    );
+    return;
+  }
+
+  writeMiningMonitorState(state);
+  await ctx.reply(`Cüzdan kaydı silindi: ${input} (${removed} kayıt)`);
+}
+
 async function sendSingleWalletInfo(ctx: any, input: string) {
   try {
     const wallet = await getAckiWalletActivity(input);
+    registerSystemMiningWatch(wallet);
     await replyWithOptionalHtml(
       ctx,
       buildWalletInfoMessage(wallet, ctx.chat?.id),
@@ -2236,6 +2699,7 @@ async function replyWalletInfo(ctx: any) {
     const originalInput = inputs[index] || "wallet";
 
     if (result.status === "fulfilled") {
+      registerSystemMiningWatch(result.value);
       return buildWalletInfoMessage(result.value, ctx.chat?.id);
     }
 
@@ -2359,7 +2823,7 @@ async function replyWatchMining(ctx: any) {
 
       await ctx.reply(
         [
-          "⛏️ Mining monitor zaten aktif ✅",
+          "⛏️ Cüzdan taraması zaten aktif ✅",
           "",
           `Wallet: ${existing.label}`,
           `Current locked: ${formatRawNackl(existing.lastLockedRaw)} $NACKL`,
@@ -2410,7 +2874,7 @@ async function replyWatchMining(ctx: any) {
 
     await ctx.reply(
       [
-        "⛏️ Mining monitor başladı ✅",
+        "⛏️ Cüzdan taraması başladı ✅",
         "",
         `Wallet: ${label}`,
         `Current locked: ${formatRawNackl(lockedRaw)} $NACKL`,
@@ -2453,7 +2917,7 @@ async function replyWatchMining(ctx: any) {
     }
 
     await ctx.reply(
-      "Mining monitor başlatılamadı. Acki network yoğun olabilir, biraz sonra tekrar dene.",
+      "Cüzdan taraması başlatılamadı. Acki network yoğun olabilir, biraz sonra tekrar dene.",
     );
   }
 }
@@ -2473,7 +2937,7 @@ async function replyUnwatchMining(ctx: any) {
   if (!input || input.toLowerCase() === "all") {
     state.watches = state.watches.filter((watch) => watch.chatId !== chatId);
     writeMiningMonitorState(state);
-    await ctx.reply("Bu sohbet için tüm mining monitor kayıtları durduruldu.");
+    await ctx.reply("Bu sohbet için tüm cüzdan tarama kayıtları durduruldu.");
     return;
   }
 
@@ -2492,12 +2956,12 @@ async function replyUnwatchMining(ctx: any) {
 
   if (state.watches.length === before) {
     await ctx.reply(
-      "Bu wallet için aktif monitor bulunamadı. /wallets ile kontrol edebilirsin.",
+      "Bu wallet için aktif tarama bulunamadı. /wallets ile kontrol edebilirsin.",
     );
     return;
   }
 
-  await ctx.reply(`Mining monitor durduruldu: ${input}`);
+  await ctx.reply(`Cüzdan taraması durduruldu: ${input}`);
 }
 
 async function replyWatchlist(ctx: any) {
@@ -2521,7 +2985,7 @@ async function replyWalletManagement(ctx: any) {
       [
         "👛 Wallet Management",
         "",
-        "No wallet is being monitored yet.",
+        "No wallet is being scanned yet.",
         "",
         "Add one with:",
         "/watch ackerman",
@@ -2568,7 +3032,7 @@ async function replyWalletManagementListFromAction(ctx: any) {
       [
         "👛 Wallet Management",
         "",
-        "No wallet is being monitored yet.",
+        "No wallet is being scanned yet.",
         "",
         "Add one with:",
         "/watch ackerman",
@@ -2857,7 +3321,7 @@ async function replyManualMiningUpdate(ctx: any) {
 
   if (!watches.length) {
     await ctx.reply(
-      "Aktif mining monitor yok. Başlatmak için: /watch ackerman",
+      "Aktif cüzdan taraması yok. Eklemek için: /info ackerman",
     );
     return;
   }
@@ -2893,6 +3357,48 @@ async function replyManualMiningUpdate(ctx: any) {
   await ctx.reply(lines.join("\n"));
 }
 
+// PopitGame addresses of the wallets this bot is actively mining, keyed the
+// same way selectMiningWatchesForTick compares them (lowercased).  Matching is
+// on (chatId, walletName) because a wallet name alone is not unique across
+// chats, and bee-miner ids are built from exactly that pair.
+function collectBeeMinedPopitAddresses(state: MiningMonitorState): Set<string> {
+  const addresses = new Set<string>();
+
+  try {
+    const minedKeys = new Set(
+      readBeeMinerState()
+        .miners.filter((miner) => miner.status === "active")
+        .map((miner) => `${miner.chatId}:${String(miner.walletName).toLowerCase()}`),
+    );
+
+    if (!minedKeys.size) {
+      return addresses;
+    }
+
+    for (const watch of state.watches) {
+      const popit = String(watch.popitGameAddress || "").toLowerCase();
+
+      if (!popit) {
+        continue;
+      }
+
+      const label = String(watch.label || watch.input || "").toLowerCase();
+
+      if (minedKeys.has(`${watch.chatId}:${label}`)) {
+        addresses.add(popit);
+      }
+    }
+  } catch (error) {
+    // A malformed bee-miners.json must not take the whole monitor tick down;
+    // losing priority just means falling back to the ordinary rotation.
+    console.warn("Bee mined popit address collection failed:", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return addresses;
+}
+
 async function runMiningMonitorTick(bot: Telegraf<any>, trigger = "auto") {
   // Bee uses the same public GraphQL pool as the broad wallet monitor.  Do
   // not flood that pool while a Bee session or reward claim is live; a missed
@@ -2924,7 +3430,16 @@ async function runMiningMonitorTick(bot: Telegraf<any>, trigger = "auto") {
   // (see updateMiningWatchRecord below), which cut the per-wallet network
   // calls in this tick from 2 down to 1 by skipping the unused main-account
   // query.
-  const selection = selectMiningWatchesForTick(state, nowMs);
+  // Wallets we mine ourselves earn once per ~5.6-minute epoch, but the plain
+  // rotation revisits a given wallet every ~26 min (fast lane) to ~55 min
+  // (passive), so their rewards were arriving merged and hours late.  Worse,
+  // a wallet whose mining stalls goes stale -> drops to the passive lane ->
+  // gets scanned even less often, which is self-reinforcing.  Feed them to
+  // the priority lane that selectMiningWatchesForTick already implements but
+  // that nothing was passing: they bypass the cooldown and get scanned every
+  // tick regardless of rotation position.
+  const priorityPopitAddresses = collectBeeMinedPopitAddresses(state);
+  const selection = selectMiningWatchesForTick(state, nowMs, priorityPopitAddresses);
   const scanGroups = buildMiningSourceScanGroups(selection.watches, state.watches);
   state.nextScanCursor = selection.nextCursor;
   state.nextActiveScanCursor = selection.nextActiveCursor;
@@ -3028,7 +3543,12 @@ async function runMiningMonitorTick(bot: Telegraf<any>, trigger = "auto") {
             changedCount += 1;
 
             for (const subscriber of group.watches) {
-              const shouldNotify = isMiningWatchNotificationEnabled(subscriber);
+              // Nothing gets queued when notifications are globally off, so the
+              // send loop below simply finds an empty map — the scan itself and
+              // the state it writes are untouched.
+              const shouldNotify =
+                MINING_MONITOR_NOTIFY_ENABLED &&
+                isMiningWatchNotificationEnabled(subscriber);
 
               if (!shouldNotify) {
                 skippedDisabled += 1;
@@ -4008,16 +4528,50 @@ function updateBeeMinerRecord(
   return miner;
 }
 
+// A plan covers ONE mining wallet. Without the last check a subscriber could
+// connect several wallets and mine them all on a single subscription, which is
+// the whole price of the product given away.
+//
+// When a chat somehow ends up with more than one active wallet, the oldest one
+// mines. Deterministic on purpose — picking "the first in the array" would
+// change with file ordering and quietly move mining between wallets across
+// restarts. Admins are exempt so the operator can run test wallets.
 function isBeeMinerEligible(
   miner: BeeMinerRecord,
   paymentsState: ReturnType<typeof readPaymentsState>,
   now: number,
+  allMiners: BeeMinerRecord[],
 ): boolean {
-  return (
-    miner.status === "active" &&
-    (isAdminChatId(miner.chatId) ||
-      hasActiveSubscriptionForChat(paymentsState, miner.chatId, now))
-  );
+  if (miner.status !== "active") {
+    return false;
+  }
+
+  if (isAdminChatId(miner.chatId)) {
+    return true;
+  }
+
+  if (!hasActiveSubscriptionForChat(paymentsState, miner.chatId, now)) {
+    return false;
+  }
+
+  const primary = allMiners
+    .filter((m) => m.chatId === miner.chatId && m.status === "active")
+    .sort(
+      (a, b) =>
+        (Date.parse(a.createdAt) || 0) - (Date.parse(b.createdAt) || 0),
+    )[0];
+
+  return !primary || primary.id === miner.id;
+}
+
+// How many wallets a chat is already mining with — used to refuse a second one
+// at the moment it is started, instead of silently ignoring it later.
+function countActiveMinersForChat(
+  miners: BeeMinerRecord[],
+  chatId: number,
+): number {
+  return miners.filter((m) => m.chatId === chatId && m.status === "active")
+    .length;
 }
 
 function isRootSubmitFailure(errors: string[]): boolean {
@@ -4052,7 +4606,16 @@ function queueBeeEpochClaim(
         const fresh = state.miners.find((item) => item.id === miner.id);
         const paymentsState = readPaymentsState();
 
-        if (!fresh || !fresh.minerAddress || !isBeeMinerEligible(fresh, paymentsState, Date.now())) {
+        if (
+          !fresh ||
+          !fresh.minerAddress ||
+          !isBeeMinerEligible(
+            fresh,
+            paymentsState,
+            Date.now(),
+            readBeeMinerState().miners,
+          )
+        ) {
           return;
         }
 
@@ -4136,34 +4699,129 @@ const BEE_EPOCH_BLOCK_PERIOD = 1000;
 const ACKI_MAINNET_GRAPHQL_URL =
   process.env.ACKI_MAINNET_GRAPHQL_URL || "https://mainnet.ackinacki.org/graphql";
 
+// Measured on mainnet 2026-08-10 against the chain's own clock: 54 blocks in
+// 18s = 3.000 blocks/s, matching the 2.98 measured on 2026-08-08.
+const BEE_BLOCKS_PER_SECOND = 3.0;
+// How stale an anchor may get before it is refreshed. Rate error is well under
+// 0.05 blocks/s, so a minute of drift is ~3 blocks against a 1000-block epoch.
+const BEE_BLOCK_ANCHOR_MAX_AGE_S = 60;
+// Beyond this the guess stops being worth making.
+const BEE_BLOCK_ANCHOR_HARD_LIMIT_S = 600;
+
+// Retry spacing for the expensive height read. Without this the anchor going
+// stale puts every single pulse back on the ~5s query, which is the behaviour
+// this whole change exists to remove.
+const BEE_BLOCK_ANCHOR_RETRY_S = 30;
+
+let beeBlockAnchor: { seqNo: number; chainTs: number } | null = null;
+let beeBlockAnchorAttemptTs = 0;
+
+async function ackiGraphQl(query: string, timeoutMs: number): Promise<any> {
+  const res = await fetch(ACKI_MAINNET_GRAPHQL_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  return res.json();
+}
+
+// Current epoch, derived from block height.
+//
+// Measured 2026-08-10: `blockchain{blocks(last:1)}` fails on mainnet roughly
+// 7 times out of 8 with "pool timed out while waiting for an open connection"
+// — the server's block-index pool is exhausted, while `blockchain{account}`
+// on the same endpoint answers in 70ms. Each failure costs a fixed ~5s.
+//
+// The caller used to fall back to the contract's stored epoch whenever this
+// returned null. That silently corrupted epoch tracking: the contract value
+// LAGS the chain, so consecutive pulses alternated between two different
+// numbers, and a single failed read landing between two good ones wiped the
+// pending candidate (the confirm path deletes it when the value equals the
+// previous one). Confirmation then needed two CONSECUTIVE successful reads —
+// about a 1.4% chance per pulse pair — and 42% of observed candidates never
+// confirmed, skipping whole epochs (and their sessions) outright.
+//
+// So: anchor on every successful read and extrapolate from the known block
+// rate in between. A short extrapolation is far more accurate than a value
+// from a different clock, and it keeps epoch tracking on ONE source.
 async function readChainEpoch5mStart(): Promise<string | null> {
-  try {
-    const res = await fetch(ACKI_MAINNET_GRAPHQL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: "{blockchain{blocks(last:1){edges{node{seq_no}}}}}",
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
-
-    const json: any = await res.json();
-    const seqNo = Number(
-      json?.data?.blockchain?.blocks?.edges?.[0]?.node?.seq_no,
-    );
-
-    if (!Number.isFinite(seqNo) || seqNo <= 0) {
-      return null;
-    }
-
-    return String(
+  const toEpoch = (seqNo: number) =>
+    String(
       Math.floor(seqNo / BEE_EPOCH_BLOCK_PERIOD) * BEE_EPOCH_BLOCK_PERIOD,
     );
+
+  // Read the chain clock first. Measured 2026-08-10 on mainnet: this answers in
+  // ~70ms and succeeded 6/6, while `blocks(last:1)` in the SAME request failed
+  // 5/6 with "pool timed out" and costs a fixed ~5s when it does. The endpoint's
+  // block/transaction index is exhausted; `account` and `finalizedTimestamp`
+  // are served fine.
+  //
+  // This used to call `blocks(last:1)` on every autopilot pulse — a ~5s blocking
+  // call once per second, which both starved epoch detection and kept a
+  // connection permanently occupied against the same pool the SDK submits
+  // through.
+  let chainTs: number | null = null;
+
+  try {
+    const json = await ackiGraphQl("{blockchain{finalizedTimestamp}}", 10000);
+    const value = Number(json?.data?.blockchain?.finalizedTimestamp);
+    chainTs = Number.isFinite(value) && value > 0 ? value : null;
   } catch {
-    // `pool timed out` is routine here; a skipped read just means the caller
-    // retries on the next pulse rather than acting on a guess.
+    chainTs = null;
+  }
+
+  if (chainTs === null) {
     return null;
   }
+
+  const anchorAgeS = beeBlockAnchor ? chainTs - beeBlockAnchor.chainTs : Infinity;
+
+  // Re-anchor on the real height occasionally. Both fields come from one
+  // request so the pair shares a timestamp; the 5s cost is paid about once a
+  // minute instead of once a second, and a failure just keeps the old anchor.
+  const sinceAttemptS = chainTs - beeBlockAnchorAttemptTs;
+
+  if (
+    anchorAgeS >= BEE_BLOCK_ANCHOR_MAX_AGE_S &&
+    sinceAttemptS >= BEE_BLOCK_ANCHOR_RETRY_S
+  ) {
+    beeBlockAnchorAttemptTs = chainTs;
+
+    try {
+      const json = await ackiGraphQl(
+        "{blockchain{finalizedTimestamp blocks(last:1){edges{node{seq_no}}}}}",
+        15000,
+      );
+      const seqNo = Number(
+        json?.data?.blockchain?.blocks?.edges?.[0]?.node?.seq_no,
+      );
+      const pairedTs = Number(json?.data?.blockchain?.finalizedTimestamp);
+
+      if (Number.isFinite(seqNo) && seqNo > 0 && Number.isFinite(pairedTs)) {
+        beeBlockAnchor = { seqNo, chainTs: pairedTs };
+        return toEpoch(seqNo);
+      }
+    } catch {
+      // Keep the existing anchor and extrapolate below.
+    }
+  }
+
+  if (!beeBlockAnchor) {
+    return null;
+  }
+
+  const elapsedS = chainTs - beeBlockAnchor.chainTs;
+
+  if (elapsedS < 0 || elapsedS > BEE_BLOCK_ANCHOR_HARD_LIMIT_S) {
+    return null;
+  }
+
+  const estimated =
+    beeBlockAnchor.seqNo + elapsedS * BEE_BLOCKS_PER_SECOND;
+
+  return toEpoch(Math.floor(estimated));
 }
 
 async function observeBeeEpoch(
@@ -4213,6 +4871,29 @@ async function observeBeeEpoch(
 
   const previous =
     beeObservedEpoch5m.get(key) ?? miner.lastEpoch5mStart ?? null;
+
+  // The two sources run on different clocks: the block height is current, the
+  // contract's copy only advances when acceptTap/getReward touches it. Feeding
+  // both into one candidate/confirmation state machine let a contract-sourced
+  // pulse land between two chain-sourced ones and delete the pending
+  // candidate, because it compares equal to the previous canonical value.
+  // Measured 2026-08-10: 301 candidates produced only 175 confirmations, and
+  // whole epochs (with their sessions) were skipped.
+  //
+  // When the chain height is unavailable, hold the last chain-derived epoch
+  // instead of borrowing the contract's. Reporting `confirmed` matters: the
+  // caller does `if (!epoch.confirmed) continue`, so returning false here would
+  // also skip the stale-epoch deadlock guard below — turning a bad reading into
+  // a full stall.
+  if (!chainEpoch5mStart) {
+    return previous
+      ? {
+          epochChanged: false,
+          confirmed: true,
+          data: { ...contractData, epoch5mStart: previous },
+        }
+      : { epochChanged: false, confirmed: false, data };
+  }
   const updateObservedState = (epoch5mStart: string, changed: boolean) => {
     updateBeeMinerRecord(miner.id, (row) => {
       row.lastTapSum = data.tapSum;
@@ -4444,8 +5125,16 @@ async function runBeeContinuousSession(miner: BeeMinerRecord): Promise<void> {
       sawSubmitRoot: finalSummary.sawSubmitRoot,
       sawSubmitProof: finalSummary.sawSubmitProof,
       sawSessionAccepted: finalSummary.sawSessionAccepted,
+      // Root-cause instrumentation (2026-08-10). The action list and the SDK's
+      // own status stream were collected but never printed, so a chain-side
+      // `session_rejected` looked identical to a session that just went quiet.
+      sawSessionRejected: finalSummary.sawSessionRejected,
+      actions: finalSummary.actions,
+      statuses: finalSummary.statuses,
       error: result.error,
       eventErrors: finalSummary.errors.slice(0, 3),
+      // Only populated when the SDK reported an error or a rejection.
+      rawEvents: finalSummary.rawOnError,
     });
 
     updateBeeMinerRecord(miner.id, (row) => {
@@ -4576,7 +5265,7 @@ async function runBeeAutopilotPulse(): Promise<void> {
     const paymentsState = readPaymentsState();
     const now = Date.now();
     const activeMiners = state.miners.filter((miner) =>
-      isBeeMinerEligible(miner, paymentsState, now),
+      isBeeMinerEligible(miner, paymentsState, now, state.miners),
     );
     let availableStarts = Math.max(0, BEE_MINING_CONCURRENCY - beeSessionRunning.size);
 
@@ -4740,6 +5429,251 @@ const PAYMENTS_CHECK_INTERVAL_MS =
   Number(process.env.PAYMENTS_CHECK_INTERVAL_SECONDS || 90) * 1000;
 const PAYMENTS_CHECK_ENABLED =
   String(process.env.PAYMENTS_CHECK_ENABLED || "false").toLowerCase() === "true";
+
+// TON / USDT rail. Separate switch from the SHELL one above: SHELL stays off
+// while this is the live way to pay.
+const TON_PAYMENTS_ADDRESS = String(process.env.TON_PAYMENTS_ADDRESS || "").trim();
+const TON_PAYMENTS_CHECK_ENABLED =
+  String(process.env.TON_PAYMENTS_CHECK_ENABLED || "false").toLowerCase() === "true" &&
+  Boolean(TON_PAYMENTS_ADDRESS);
+const TON_PAYMENTS_CHECK_INTERVAL_MS =
+  Number(process.env.TON_PAYMENTS_CHECK_INTERVAL_SECONDS || 45) * 1000;
+const TONAPI_KEY = String(process.env.TONAPI_KEY || "").trim() || undefined;
+
+let tonPaymentsTimer: ReturnType<typeof setTimeout> | undefined;
+let tonPaymentsRunning = false;
+
+async function runTonPaymentsCheckTick(bot: Telegraf<any>) {
+  if (tonPaymentsRunning) return;
+
+  tonPaymentsRunning = true;
+
+  try {
+    const state = readPaymentsState();
+    const sinceLt = Number(state.tonLastLt || 0);
+    let transfers;
+
+    try {
+      transfers = await fetchIncomingPayments({
+        friendlyAddress: TON_PAYMENTS_ADDRESS,
+        sinceLt,
+        ...(TONAPI_KEY ? { apiKey: TONAPI_KEY } : {}),
+      });
+    } catch (error) {
+      console.error("TON payments check: fetch failed:", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    if (!transfers.length) return;
+
+    // First run: adopt the newest lt as the baseline and process nothing.
+    // Without this the wallet's entire history gets replayed on startup —
+    // including old real payments and the phishing dust TON wallets collect —
+    // none of which relates to an invoice we issued.
+    if (!sinceLt) {
+      state.tonLastLt = transfers[transfers.length - 1]!.lt;
+      writePaymentsState(state);
+      console.log("TON payments: baseline established:", {
+        tonLastLt: state.tonLastLt,
+        skipped: transfers.length,
+      });
+      return;
+    }
+
+    const now = Date.now();
+    let credited = 0;
+
+    for (const transfer of transfers) {
+      // Advance the cursor for every transfer we look at, matched or not, so
+      // spam never gets re-examined. TON wallets receive a steady stream of
+      // 0-value dust carrying phishing text in the comment; it must not stall
+      // the cursor or reach a human.
+      state.tonLastLt = Math.max(Number(state.tonLastLt || 0), transfer.lt);
+
+      if (BigInt(transfer.amountRaw) <= 0n) continue;
+
+      const code = extractInvoiceCode(transfer.comment);
+
+      if (!code) {
+        // Real money with no code — a human has to sort this out, but the
+        // comment itself is never echoed anywhere: it is attacker-controlled
+        // text and has carried homoglyph phishing URLs in practice.
+        console.warn("TON payments: paid transfer without a usable code:", {
+          lt: transfer.lt,
+          currency: transfer.currency,
+          amount: formatPayAmount(transfer.amountRaw, transfer.currency),
+        });
+        continue;
+      }
+
+      const invoice = state.pendingInvoices.find(
+        (item) => item.code && item.code.toUpperCase() === code,
+      );
+
+      if (!invoice) {
+        console.warn("TON payments: code matched no pending invoice:", {
+          lt: transfer.lt,
+          code,
+          currency: transfer.currency,
+          amount: formatPayAmount(transfer.amountRaw, transfer.currency),
+        });
+        continue;
+      }
+
+      const plan = getPlanById(invoice.planId);
+
+      if (!plan) continue;
+
+      // The invoice quotes both currencies; charge against whichever one
+      // actually arrived. A TON payment against an invoice with no TON price
+      // (rate lookup failed at creation) has no agreed amount, so it cannot
+      // be auto-credited.
+      const expectedRaw =
+        transfer.currency === "ton" ? invoice.amountTonRaw : invoice.amountRaw;
+
+      if (!expectedRaw) {
+        console.warn("TON payments: currency not quoted on this invoice:", {
+          code,
+          currency: transfer.currency,
+        });
+        continue;
+      }
+
+      // A valid code must still be backed by the right amount, otherwise a
+      // dust transfer quoting a leaked code would buy a subscription.
+      // USDT gets a flat cent of slack; TON gets 2%, since its amount was
+      // derived from a rate and rounded.
+      const expected = BigInt(expectedRaw);
+      const paid = BigInt(transfer.amountRaw);
+      const tolerance =
+        transfer.currency === "ton"
+          ? expected / 50n
+          : BigInt(usdtAmountToRaw(0.01));
+
+      if (paid + tolerance < expected) {
+        const unit = transfer.currency === "ton" ? "TON" : "USDT";
+
+        console.warn("TON payments: underpaid invoice:", {
+          code,
+          currency: transfer.currency,
+          expected: formatPayAmount(expectedRaw, transfer.currency),
+          paid: formatPayAmount(transfer.amountRaw, transfer.currency),
+        });
+
+        try {
+          await bot.telegram.sendMessage(
+            invoice.chatId,
+            [
+              "⚠️ Ödemen eksik göründü.",
+              "",
+              `Beklenen: ${formatPayAmount(expectedRaw, transfer.currency)} ${unit}`,
+              `Gelen: ${formatPayAmount(transfer.amountRaw, transfer.currency)} ${unit}`,
+              "",
+              "Yöneticiyle iletişime geç.",
+            ].join("\n"),
+          );
+        } catch {
+          // Delivery failure must not stop the tick.
+        }
+
+        continue;
+      }
+
+      // Extend from the later of now and any existing expiry, so buying early
+      // adds time instead of throwing the remainder away.
+      const existing = state.subscriptions[String(invoice.chatId)];
+      const base =
+        existing && new Date(existing.activeUntil).getTime() > now
+          ? new Date(existing.activeUntil).getTime()
+          : now;
+      const activeUntil = new Date(
+        base + plan.days * 24 * 60 * 60 * 1000,
+      ).toISOString();
+
+      state.subscriptions[String(invoice.chatId)] = {
+        planId: plan.id,
+        activeUntil,
+      };
+      state.pendingInvoices = state.pendingInvoices.filter(
+        (item) => item.id !== invoice.id,
+      );
+      credited += 1;
+
+      console.log("TON payments: subscription activated:", {
+        chatId: invoice.chatId,
+        plan: plan.id,
+        currency: transfer.currency,
+        amount: formatPayAmount(transfer.amountRaw, transfer.currency),
+        activeUntil,
+      });
+
+      try {
+        await bot.telegram.sendMessage(
+          invoice.chatId,
+          [
+            "✅ Ödemen alındı, aboneliğin aktif.",
+            "",
+            `Plan: ${plan.label} (${plan.days} gün)`,
+            `Tutar: ${formatPayAmount(transfer.amountRaw, transfer.currency)} ${transfer.currency === "ton" ? "TON" : "USDT"}`,
+            `Bitiş: ${new Date(activeUntil).toLocaleString("tr-TR")}`,
+            "",
+            "Madenciliği başlatmak için: /miner_start",
+          ].join("\n"),
+        );
+      } catch (error) {
+        console.error("TON payments: activation notice failed:", {
+          chatId: invoice.chatId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Drop invoices nobody paid in time, so a leaked code cannot be redeemed
+    // days later.
+    state.pendingInvoices = state.pendingInvoices.filter(
+      (item) => new Date(item.expiresAt).getTime() > now,
+    );
+
+    writePaymentsState(state);
+
+    if (credited) {
+      console.log("TON payments check finished:", { credited });
+    }
+  } finally {
+    tonPaymentsRunning = false;
+  }
+}
+
+function startTonPaymentsScheduler(bot: Telegraf<any>) {
+  if (!TON_PAYMENTS_CHECK_ENABLED) {
+    console.log(
+      "TON payments scheduler disabled (TON_PAYMENTS_CHECK_ENABLED / TON_PAYMENTS_ADDRESS)",
+    );
+    return;
+  }
+
+  if (tonPaymentsTimer) {
+    clearTimeout(tonPaymentsTimer);
+  }
+
+  const scheduleNext = (delayMs: number) => {
+    tonPaymentsTimer = setTimeout(() => {
+      void runTonPaymentsCheckTick(bot).finally(() =>
+        scheduleNext(TON_PAYMENTS_CHECK_INTERVAL_MS),
+      );
+    }, delayMs);
+  };
+
+  console.log("TON payments scheduler started:", {
+    intervalSeconds: Math.round(TON_PAYMENTS_CHECK_INTERVAL_MS / 1000),
+    address: TON_PAYMENTS_ADDRESS,
+    hasApiKey: Boolean(TONAPI_KEY),
+  });
+
+  scheduleNext(TON_PAYMENTS_CHECK_INTERVAL_MS);
+}
 
 let paymentsCheckTimer: ReturnType<typeof setTimeout> | undefined;
 let paymentsCheckRunning = false;
@@ -5135,7 +6069,7 @@ function buildMonitorStatusMessage() {
   const state = readMiningMonitorState();
 
   return [
-    "🩺 Mining Monitor Status",
+    "🩺 Wallet Scan Status",
     "",
     `Status: ${miningMonitorRuntime.startedAt ? "running" : "not started"}`,
     `Enabled: ${MINING_MONITOR_ENABLED ? "yes" : "no"}`,
@@ -5643,7 +6577,10 @@ export async function startBot(botToken: string) {
       referredBy,
     });
 
-    await ctx.reply(buildWelcomeMessage(), buildMainMenu());
+    // Persistent bottom keyboard (the one behind the "Menü" button), not the
+    // inline card: it stays put after every message, so the common actions are
+    // always one tap away instead of being scrolled out of history.
+    await ctx.reply(buildWelcomeMessage(), buildMainKeyboard());
 
     // Website search box deep link (ackinackiradar.com). Telegram caps
     // start payloads at 64 chars, [A-Za-z0-9_] only. A raw wallet address is
@@ -5686,12 +6623,306 @@ export async function startBot(botToken: string) {
     );
   });
   bot.command("help", async (ctx) => ctx.reply(buildHelpMessage()));
-  bot.command("watch", replyWatchMining);
-  bot.command("mining", replyWatchMining);
-  bot.command("wallets", replyWalletManagement);
+  // /watch, /mining, /unwatch, /wallets and /watchlist were removed on
+  // 2026-08-09: reward notifications are off, so a user-managed watch list no
+  // longer means anything.  Wallets now enter the scan set on their own, from
+  // /info lookups and from cloud-mining connections.  The handlers and the
+  // record shape are deliberately left in place so this can be restored.
+  // --- Telegram Stars ---
+  //
+  // Stars need no payment provider: `currency: "XTR"` with an empty
+  // provider_token, and Telegram handles collection. Telegraf 4.16.3 predates
+  // Stars so its types do not know XTR; the values pass straight through to the
+  // Bot API, hence the casts.
+  bot.command("pay", async (ctx) => {
+    const planId = getCommandArgument(ctx.message?.text).trim().toLowerCase();
+    const chatId = ctx.chat?.id;
+
+    if (!chatId) {
+      await ctx.reply("Sohbet bilgisi alınamadı.");
+      return;
+    }
+
+    // The 1-star test plan is admin-only and never listed, so a real user can
+    // neither see it nor buy a day of mining for one star.
+    // isRealAdminContext, not isAdminContext: the 1-star plan has to stay
+    // available while /testmode is on, since testing the payment flow as a
+    // normal user is exactly what it is for.
+    const plan =
+      planId === TEST_PLAN.id && isRealAdminContext(ctx)
+        ? TEST_PLAN
+        : getPlanById(planId);
+
+    if (!plan) {
+      await ctx.reply(
+        [
+          "⭐ Pay with Telegram Stars",
+          "",
+          ...PLANS.map(
+            (p) =>
+              `/pay ${p.id} — ${p.days} days — ${getPlanStars(p)} ⭐ (${p.priceUsd} USDT)`,
+          ),
+          "",
+          `Want to try first? /trial (${TRIAL_DAYS} days, free)`,
+        ].join("\n"),
+      );
+      return;
+    }
+
+    const stars = getPlanStars(plan);
+
+    try {
+      await (ctx as any).replyWithInvoice({
+        title: `${plan.label} — ${plan.days} gün`,
+        description: `Acki Nacki cloud mining for ${plan.days} days. Activates as soon as the payment clears.`,
+        // Echoed back on successful_payment; this is how we know what was bought.
+        payload: `plan:${plan.id}:${chatId}`,
+        provider_token: "",
+        currency: "XTR",
+        prices: [{ label: `${plan.label} ${plan.days} gün`, amount: stars }],
+      });
+    } catch (error) {
+      console.error("Stars invoice failed:", {
+        chatId,
+        plan: plan.id,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      await ctx.reply(
+        "Could not open the payment sheet. Try again shortly; contact the admin if it keeps failing.",
+      );
+    }
+  });
+
+  // Telegram asks for a final go-ahead before charging. Answering false here
+  // cancels the payment, so only refuse for a reason we can state.
+  bot.on("pre_checkout_query", async (ctx) => {
+    const payload = String((ctx as any).preCheckoutQuery?.invoice_payload || "");
+    const planId = payload.split(":")[1] || "";
+
+    // resolvePaidPlan, not getPlanById: the test plan lives outside PLANS, and
+    // rejecting it here would cancel a payment we deliberately issued.
+    if (!resolvePaidPlan(planId)) {
+      await ctx.answerPreCheckoutQuery(false, "Plan not found, please try again.");
+      return;
+    }
+
+    await ctx.answerPreCheckoutQuery(true);
+  });
+
+  // Filtered rather than a bare bot.on("message"): that would sit in front of
+  // every later command handler and only work because it called next().
+  bot.on(message("successful_payment"), async (ctx) => {
+    const payment = (ctx.message as any).successful_payment;
+    const chatId = ctx.chat?.id;
+    const chargeId = String(payment.telegram_payment_charge_id || "");
+    const planId = String(payment.invoice_payload || "").split(":")[1] || "";
+    const plan = resolvePaidPlan(planId);
+
+    if (!chatId || !plan) {
+      console.error("Stars payment with unusable payload:", {
+        chatId,
+        payload: payment.invoice_payload,
+      });
+      return;
+    }
+
+    const state = readPaymentsState();
+
+    // Telegram can redeliver an update; crediting twice would be free time.
+    if (chargeId && (state.starsCharges ?? []).includes(chargeId)) {
+      console.warn("Stars payment already credited, ignoring replay:", { chargeId });
+      return;
+    }
+
+    const activeUntil = grantSubscription(state, chatId, plan.id, plan.days);
+
+    if (chargeId) {
+      state.starsCharges = [...(state.starsCharges ?? []), chargeId].slice(-500);
+    }
+
+    writePaymentsState(state);
+
+    console.log("Stars payment credited:", {
+      chatId,
+      plan: plan.id,
+      stars: payment.total_amount,
+      activeUntil,
+    });
+
+    await ctx.reply(
+      [
+        "✅ Payment received — your subscription is active.",
+        "",
+        `Plan: ${plan.label} (${plan.days} days)`,
+        `Paid: ${payment.total_amount} ⭐`,
+        `Expires: ${new Date(activeUntil).toUTCString()}`,
+        "",
+        "Next: open the dashboard to connect a wallet and start mining.",
+        "https://ackinackiradar.com",
+      ].join("\n"),
+    );
+  });
+
+  bot.command("trial", async (ctx) => {
+    const chatId = ctx.chat?.id;
+
+    if (!chatId) {
+      await ctx.reply("Could not read chat info.");
+      return;
+    }
+
+    const state = readPaymentsState();
+
+    if ((state.trialUsed ?? []).includes(chatId)) {
+      await ctx.reply(
+        ["You have already used your free trial.", "", "Plans: /plans"].join(
+          "\n",
+        ),
+      );
+      return;
+    }
+
+    const plan = PLANS[0]!;
+    const activeUntil = grantSubscription(state, chatId, plan.id, TRIAL_DAYS, {
+      trial: true,
+    });
+    state.trialUsed = [...(state.trialUsed ?? []), chatId];
+    writePaymentsState(state);
+
+    console.log("Trial granted:", { chatId, activeUntil });
+
+    await ctx.reply(
+      [
+        `🎁 Your ${TRIAL_DAYS}-day free trial has started.`,
+        "",
+        `Expires: ${new Date(activeUntil).toUTCString()}`,
+        "",
+        "Now open the dashboard and connect your wallet:",
+        "https://ackinackiradar.com",
+        "",
+        "1) Press “Telegram ile devam et” to sign in",
+        "2) Enter your Acki Nacki wallet name and connect",
+        "3) Approve in your wallet app, then press Check",
+      ].join("\n"),
+    );
+  });
+
+  // /wallets is the name people look for; /forget kept as an alias so anything
+  // that already tells users to type it keeps working.
+  // Radar watch records — distinct from the MINING wallets behind the
+  // "👛 Wallets" keyboard button. Named apart on purpose: one "wallets" for two
+  // different things was going to be read as a bug.
+  // Suspends this admin's privileges so the operator can walk through the
+  // product as a paying user would: subscription gate, one-wallet rule, the
+  // lot. In memory only — a restart hands the privileges straight back.
+  bot.command("testmode", async (ctx) => {
+    if (!isRealAdminContext(ctx)) {
+      await replyAdminOnly(ctx);
+      return;
+    }
+
+    const chatId = ctx.chat?.id;
+
+    if (!chatId) {
+      await ctx.reply("Could not read chat info.");
+      return;
+    }
+
+    const arg = getCommandArgument(ctx.message?.text).trim().toLowerCase();
+    const turnOn = arg ? arg === "on" : !adminTestMode.has(chatId);
+
+    if (turnOn) {
+      adminTestMode.add(chatId);
+    } else {
+      adminTestMode.delete(chatId);
+    }
+
+    console.log("Admin test mode:", { chatId, testMode: turnOn });
+
+    await ctx.reply(
+      turnOn
+        ? [
+            "🧪 Test mode ON — you are now treated as a normal user.",
+            "",
+            "• Subscription is required to mine",
+            "• One wallet per plan applies",
+            "• Admin commands are refused",
+            "",
+            "/pay test (1 ⭐) still works, and /testmode off restores you.",
+            "A restart also restores admin rights.",
+          ].join("\n")
+        : "✅ Test mode OFF — admin privileges restored.",
+    );
+  });
+
+  bot.command("radar_wallets", replyForgetWallet);
+  bot.command("forget", replyForgetWallet);
+
+  // The counterpart to /miner_connect. /miner_stop only pauses; nothing until
+  // now could delete the record, and it stores the mining secret key.
+  bot.command("miner_remove", async (ctx) => {
+    const chatId = ctx.chat?.id;
+    const walletName = getCommandArgument(ctx.message?.text).trim();
+
+    if (!chatId) {
+      await ctx.reply("Could not read chat info.");
+      return;
+    }
+
+    const state = readBeeMinerState();
+    const owned = state.miners.filter((miner) => miner.chatId === chatId);
+
+    if (!walletName) {
+      await ctx.reply(
+        [
+          "Usage: /miner_remove <wallet name>",
+          "",
+          owned.length
+            ? `Your wallets: ${owned.map((m) => m.walletName).join(", ")}`
+            : "You have no connected wallet.",
+        ].join("\n"),
+      );
+      return;
+    }
+
+    const record = owned.find(
+      (miner) => miner.walletName.toLowerCase() === walletName.toLowerCase(),
+    );
+
+    if (!record) {
+      await ctx.reply(`No connected wallet named "${walletName}".`);
+      return;
+    }
+
+    // Discard the pooled instance while the keys are still readable, otherwise
+    // a running session would outlive the record it belongs to.
+    if (record.minerAddress) {
+      beeDiscardMiner({
+        appId: record.appId,
+        minerAddress: record.minerAddress,
+        publicKey: record.publicKey,
+      });
+    }
+
+    state.miners = state.miners.filter((miner) => miner.id !== record.id);
+    writeBeeMinerState(state);
+
+    console.log("Miner removed via bot:", {
+      chatId,
+      walletName: record.walletName,
+      previousStatus: record.status,
+    });
+
+    await ctx.reply(
+      [
+        `🗑️ ${record.walletName} removed.`,
+        "",
+        "Mining stopped and the stored keys were deleted.",
+        "You can reconnect any time with /miner_connect.",
+      ].join("\n"),
+    );
+  });
   bot.command("update", replyManualMiningUpdate);
-  bot.command("unwatch", replyUnwatchMining);
-  bot.command("watchlist", replyWatchlist);
   bot.command("mining_status", replyMiningStatus);
   bot.command("status", async (ctx) =>
     ctx.reply(buildMiningSummaryStatusMessage(ctx.chat?.id)),
@@ -5821,17 +7052,26 @@ export async function startBot(botToken: string) {
     // registers the user in data/users.json via registerOrGetUser(), so
     // that file is the actual full user registry, wallet-watcher or not.
     const rawText = String(ctx.message?.text || "");
-    const message = rawText.replace(/^\/broadcast_all(@\S+)?\s?/, "");
+    const body = rawText.replace(/^\/broadcast_all(@\S+)?\s?/, "");
+    // Optional leading "photo:<url>" turns the broadcast into an image post.
+    // Deliberately inline rather than an env var: a leftover env setting would
+    // silently attach the image to every later broadcast too.
+    const photoMatch = body.match(/^photo:(\S+)\s*/);
+    const photoUrl = photoMatch ? photoMatch[1] : null;
+    const message = photoMatch ? body.slice(photoMatch[0].length) : body;
 
     if (!message.trim()) {
       await ctx.reply(
         [
-          "Kullanım: /broadcast_all <mesaj>",
+          "Kullanım: /broadcast_all [photo:<url>] <mesaj>",
           "",
           "Mesaj, botu en az bir kez /start ile başlatmış HERKESE gönderilir",
           "(sadece cüzdan izleyenlere değil).",
           "Not: mesaja bir link (örn. https://ackinackiradar.com) eklersen,",
           "Telegram otomatik olarak sitenin önizleme kartını gösterir.",
+          "",
+          "Görselli yayın için başa photo: ekle, örn.",
+          "/broadcast_all photo:https://ackinackiradar.com/duyuru.png Mesaj...",
         ].join("\n"),
       );
       return;
@@ -5840,19 +7080,43 @@ export async function startBot(botToken: string) {
     const users = readUsers();
     const uniqueChatIds = Array.from(new Set(users.map((user) => user.telegramId)));
 
-    await ctx.reply(`Yayın başlıyor: ${uniqueChatIds.length} kullanıcıya gönderilecek...`);
+    // Telegram caps a photo caption at 1024 chars but a plain message at 4096.
+    // A trilingual announcement can cross that line, so fall back to sending
+    // the image and the text as two messages instead of losing the tail.
+    const captionFits = message.length <= 1024;
+
+    await ctx.reply(
+      [
+        `Yayın başlıyor: ${uniqueChatIds.length} kullanıcıya gönderilecek...`,
+        photoUrl ? `Görsel: ${photoUrl}` : "Görsel yok (düz metin).",
+        photoUrl && !captionFits
+          ? `Mesaj ${message.length} karakter — başlık sınırını (1024) aştığı için görsel ve metin ayrı gönderilecek.`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
 
     let sent = 0;
     let failed = 0;
 
     for (const chatId of uniqueChatIds) {
       try {
-        await bot.telegram.sendMessage(chatId, message);
+        if (photoUrl && captionFits) {
+          await bot.telegram.sendPhoto(chatId, photoUrl, { caption: message });
+        } else if (photoUrl) {
+          await bot.telegram.sendPhoto(chatId, photoUrl);
+          await bot.telegram.sendMessage(chatId, message);
+        } else {
+          await bot.telegram.sendMessage(chatId, message);
+        }
+
         sent += 1;
       } catch (error) {
         failed += 1;
         console.error("Broadcast (all) send failed:", {
           chatId,
+          hasPhoto: Boolean(photoUrl),
           message: error instanceof Error ? error.message : String(error),
         });
       }
@@ -5862,15 +7126,15 @@ export async function startBot(botToken: string) {
 
     await ctx.reply(`Yayın tamamlandı: ${sent} gönderildi, ${failed} başarısız.`);
   });
-  bot.command("miner_connect", async (ctx) => {
-    const walletName = getCommandArgument(ctx.message?.text);
-
+  // Shared by /miner_connect and by the "Add wallet" button's force_reply, so
+  // the button flow and the typed command cannot drift apart.
+  async function startWalletConnect(ctx: any, walletName: string) {
     if (!walletName) {
       await ctx.reply(
         [
-          "Kullanım: /miner_connect <cüzdan adı>",
+          "Usage: /miner_connect <wallet name>",
           "",
-          "Örnek: /miner_connect ackerman",
+          "Example: /miner_connect ackerman",
         ].join("\n"),
       );
       return;
@@ -5891,15 +7155,42 @@ export async function startBot(botToken: string) {
     }
 
     try {
+      const state = readBeeMinerState();
+      const id = `${chatId}:${walletName}`;
+      const existingIndex = state.miners.findIndex((m) => m.id === id);
+      const existing = existingIndex >= 0 ? state.miners[existingIndex] : undefined;
+
+      // Hand back the pending connection rather than minting a new keypair.
+      // Connecting twice used to replace the keys, which invalidated an
+      // approval already on its way to the chain — the wallet could then never
+      // finish connecting. Same trap the dashboard had.
+      const pendingLink =
+        existing && existing.status === "pending_authorization"
+          ? (existing as any).deepLink
+          : null;
+
+      if (pendingLink) {
+        await ctx.reply(
+          [
+            `⛏️ ${walletName} is already waiting for approval.`,
+            "",
+            "Open the same link again and approve it:",
+            pendingLink,
+            "",
+            "Then press the button below.",
+          ].join("\n"),
+          Markup.inlineKeyboard([
+            [Markup.button.callback("✅ I approved it", `mn:chk:${walletName}`)],
+          ]),
+        );
+        return;
+      }
+
       const keys = await beeGenerateMiningKeys(BEE_APP_ID);
       const minerAddress = await beeResolveMinerAddress({
         appId: BEE_APP_ID,
         walletName,
       });
-
-      const state = readBeeMinerState();
-      const id = `${chatId}:${walletName}`;
-      const existingIndex = state.miners.findIndex((m) => m.id === id);
 
       const record: BeeMinerRecord = {
         id,
@@ -5916,7 +7207,9 @@ export async function startBot(botToken: string) {
         lastTapsSent: null,
         lastRewardAt: null,
         createdAt: new Date().toISOString(),
-      };
+        // Kept so a repeated connect can re-show this exact link.
+        deepLink: keys.deepLink,
+      } as BeeMinerRecord;
 
       if (existingIndex >= 0) {
         state.miners[existingIndex] = record;
@@ -5951,29 +7244,38 @@ export async function startBot(botToken: string) {
 
       await ctx.reply(
         [
-          `⛏️ ${walletName} için madencilik anahtarı üretildi.`,
+          `⛏️ Mining key created for ${walletName}.`,
           "",
-          "1. Aşağıdaki linke tıkla (AN Wallet uygulaman açılacak):",
+          "1. Open this link (it launches your AN Wallet app):",
           keys.deepLink,
           "",
-          "2. AN Wallet'ta onayla.",
-          "3. Onayladıktan sonra buraya /miner_check yaz.",
+          "2. Approve it in AN Wallet.",
+          "3. Then press the button below.",
         ].join("\n"),
+        Markup.inlineKeyboard([
+          [Markup.button.callback("✅ I approved it", `mn:chk:${walletName}`)],
+        ]),
       );
     } catch (error) {
       console.error("miner_connect failed:", {
         walletName,
         message: error instanceof Error ? error.message : String(error),
       });
-      await ctx.reply("Bağlantı başlatılamadı, lütfen tekrar dene.");
+      await ctx.reply("Could not start the connection. Please try again.");
     }
-  });
+  }
 
-  bot.command("miner_check", async (ctx) => {
+  bot.command("miner_connect", async (ctx) =>
+    startWalletConnect(ctx, getCommandArgument(ctx.message?.text)),
+  );
+
+  // Shared by /miner_check and the "I approved it" button. Checks every pending
+  // connection for the chat, so the button does not need to say which one.
+  async function runMinerCheck(ctx: any) {
     const chatId = ctx.chat?.id;
 
     if (!chatId) {
-      await ctx.reply("Sohbet bilgisi alınamadı.");
+      await ctx.reply("Could not read chat info.");
       return;
     }
 
@@ -5983,7 +7285,7 @@ export async function startBot(botToken: string) {
     );
 
     if (!pending.length) {
-      await ctx.reply("Onay bekleyen bir bağlantı bulunamadı. Önce /miner_connect kullan.");
+      await ctx.reply("No connection is waiting for approval. Use “Add wallet” first.");
       return;
     }
 
@@ -6034,8 +7336,44 @@ export async function startBot(botToken: string) {
           throw new Error(verification.error);
         }
 
-        record.status = "active";
+        // A plan covers one wallet. Connecting a second one is allowed — the
+        // connection itself is fine and its keys are now valid — but it lands
+        // paused rather than mining, so a single subscription cannot quietly
+        // run two wallets. Without this the /miner_start guard is bypassed
+        // entirely, since connecting sets "active" directly.
+        const alreadyMining =
+          !isAdminChatId(chatId) &&
+          countActiveMinersForChat(state.miners, chatId) >= 1;
+
+        record.status = alreadyMining ? "stopped" : "active";
         record.lastError = null;
+
+        if (alreadyMining) {
+          await ctx.reply(
+            [
+              `✅ ${safeMessageText(record.walletName)} connected — but left paused.`,
+              "",
+              "A plan covers one mining wallet, and another one is already",
+              "mining. Pause that one, then start this one.",
+            ].join("\n"),
+          );
+        }
+
+        // A wallet that mines with us belongs on the radar too. Best effort —
+        // a failed lookup here must not undo a confirmed connection.
+        try {
+          registerSystemMiningWatch(
+            await getAckiWalletActivity(record.walletName),
+          );
+        } catch (registerError) {
+          console.warn("Miner wallet radar registration failed:", {
+            walletName: record.walletName,
+            message:
+              registerError instanceof Error
+                ? registerError.message
+                : String(registerError),
+          });
+        }
 
         await ctx.reply(`✅ ${record.walletName} bağlandı, otomatik madencilik başladı.`);
       } catch (error) {
@@ -6066,6 +7404,14 @@ export async function startBot(botToken: string) {
     }
 
     writeBeeMinerState(state);
+  }
+
+  bot.command("miner_check", runMinerCheck);
+
+  bot.action(/^mn:chk:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery("Checking…");
+    await runMinerCheck(ctx);
+    await sendWalletsScreen(ctx);
   });
 
   bot.command("miner_status", async (ctx) => {
@@ -6171,8 +7517,31 @@ export async function startBot(botToken: string) {
     if (record.status !== "stopped") {
       await ctx.reply(
         record.status === "active"
-          ? `✅ ${record.walletName} için madencilik zaten aktif.`
-          : `⚠️ ${record.walletName} durumu ${record.status}. Önce /miner_check <cüzdan adı> ile bağlantıyı tamamla.`,
+          ? `✅ ${record.walletName} is already mining.`
+          : `⚠️ ${record.walletName} is ${record.status}. Finish connecting it first.`,
+      );
+      return;
+    }
+
+    // One wallet per plan. Refusing here — rather than letting it be marked
+    // active and then quietly skipped by the scheduler — is the difference
+    // between a clear answer and a wallet that looks started but never mines.
+    if (
+      !isAdminChatId(chatId) &&
+      countActiveMinersForChat(state.miners, chatId) >= 1
+    ) {
+      const active = state.miners.find(
+        (m) => m.chatId === chatId && m.status === "active",
+      );
+
+      await ctx.reply(
+        [
+          "⚠️ A plan covers one mining wallet.",
+          "",
+          `Currently mining: ${active ? safeMessageText(active.walletName) : "—"}`,
+          "",
+          "Pause that one first, then start this one.",
+        ].join("\n"),
       );
       return;
     }
@@ -6185,24 +7554,32 @@ export async function startBot(botToken: string) {
   });
 
   bot.command("plans", async (ctx) => {
-    const lines = PLANS.map(
-      (plan) =>
-        `${plan.label} — ${plan.days} gün — ${formatShellAmount(plan.priceShellRaw)} SHELL (~$${plan.priceUsd})`,
-    );
-
+    // Prices are quoted in USDT now. The plan's priceUsd is the source of
+    // truth: USDT is a stable unit, so unlike the SHELL rail there is no
+    // guessed peg between the listed price and what the user sends.
     await ctx.reply(
       [
         "💳 Bulut Madencilik Planları",
         "",
-        ...lines,
+        ...PLANS.map(
+          (plan) =>
+            `${plan.label} — ${plan.days} gün — ${getPlanStars(plan)} ⭐ (${plan.priceUsd} USDT)`,
+        ),
         "",
-        "Satın almak için: /plan_buy <standard|max|super>",
+        `🎁 ${TRIAL_DAYS} gün ücretsiz deneme: /trial`,
+        "",
+        "Telegram'dan yıldız ile: /pay <standard|max|super>",
+        "Kripto ile ödemek istersen panelden: https://ackinackiradar.com",
+        "",
+        "Bizde ayrıca:",
+        "• Canlı web paneli — ödül akışı, döngü durumu, ağ istatistikleri",
+        "• 7/24 çalışır, uygulamayı açık tutman gerekmez",
       ].join("\n"),
     );
   });
 
   bot.command("plan_buy", async (ctx) => {
-    if (!PAYMENTS_CHECK_ENABLED) {
+    if (!PAYMENTS_CHECK_ENABLED && !TON_PAYMENTS_CHECK_ENABLED) {
       await ctx.reply(
         "Ödeme doğrulama şu an aktif değil; lütfen ödeme göndermeden önce yöneticiyle iletişime geç.",
       );
@@ -6221,6 +7598,102 @@ export async function startBot(botToken: string) {
 
     if (!plan) {
       await ctx.reply("Kullanım: /plan_buy <standard|max|super>");
+      return;
+    }
+
+    if (TON_PAYMENTS_CHECK_ENABLED) {
+      // The TON rail identifies the payment by the invoice code in the
+      // transfer comment, so — unlike the SHELL rail — there is no need for a
+      // mining wallet to be connected first. Requiring one here would recreate
+      // the catch-22 where mining needs a subscription and a subscription
+      // needed a miner.
+      const state = readPaymentsState();
+      const now = Date.now();
+
+      // Reuse a live invoice instead of minting a second code for the same
+      // plan; two open codes for one buyer only invites paying the wrong one.
+      const existing = state.pendingInvoices.find(
+        (item) =>
+          item.chatId === chatId &&
+          item.planId === plan.id &&
+          item.currency === "usdt" &&
+          new Date(item.expiresAt).getTime() > now,
+      );
+
+      let invoice: PendingInvoice;
+
+      if (existing) {
+        invoice = existing;
+      } else {
+        // Quote TON alongside USDT so the payer can use whichever they hold.
+        // The rate is locked into the invoice here: a price move during the
+        // payment window is then irrelevant. If the feed is unreachable we
+        // simply do not quote TON — selling at a guessed rate would be worse
+        // than offering one currency.
+        let amountTonRaw: string | undefined;
+        let tonUsdRate: number | undefined;
+
+        try {
+          const rate = await fetchTonUsdRate(TONAPI_KEY);
+          tonUsdRate = rate;
+          amountTonRaw = usdToTonRaw(plan.priceUsd, rate);
+        } catch (error) {
+          console.warn("TON payments: rate unavailable, quoting USDT only:", {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+
+        invoice = {
+          id: `${chatId}:${plan.id}:${now}`,
+          chatId,
+          planId: plan.id,
+          amountRaw: usdtAmountToRaw(plan.priceUsd),
+          createdAt: new Date(now).toISOString(),
+          expiresAt: new Date(now + TON_INVOICE_EXPIRY_MS).toISOString(),
+          code: buildInvoiceCode(),
+          currency: "usdt",
+          ...(amountTonRaw ? { amountTonRaw } : {}),
+          ...(tonUsdRate ? { tonUsdRate } : {}),
+        };
+
+        state.pendingInvoices.push(invoice);
+        writePaymentsState(state);
+      }
+
+      const minutesLeft = Math.max(
+        1,
+        Math.round(
+          (new Date(invoice.expiresAt).getTime() - now) / 60000,
+        ),
+      );
+
+      await ctx.reply(
+        [
+          `💳 ${plan.label} — ${plan.days} gün`,
+          "",
+          "Şunlardan BİRİNİ gönder:",
+          `• ${formatUsdtAmount(invoice.amountRaw)} USDT`,
+          ...(invoice.amountTonRaw
+            ? [`• ${formatTonAmount(invoice.amountTonRaw)} TON`]
+            : []),
+          "",
+          "Ağ: TON",
+          "Adres:",
+          TON_PAYMENTS_ADDRESS,
+          "",
+          "Açıklama / comment alanına MUTLAKA bunu yaz:",
+          invoice.code || "",
+          "",
+          "⚠️ Açıklama olmadan gönderilen ödeme otomatik eşleşmez.",
+          "⚠️ Sadece TON ağı kullan. Başka ağdan gönderilen para kaybolur.",
+          "",
+          ...(invoice.amountTonRaw
+            ? [`TON tutarı bu fatura için sabitlendi, kur değişse de geçerli.`]
+            : []),
+          `Bu fatura ${minutesLeft} dakika geçerli.`,
+          "Ödeme onaylanınca otomatik mesaj göndereceğim.",
+        ].join("\n"),
+      );
       return;
     }
 
@@ -6377,7 +7850,7 @@ export async function startBot(botToken: string) {
       return;
     }
 
-    await ctx.reply("Manual monitor tick started.");
+    await ctx.reply("Manual wallet scan tick started.");
     await runMiningMonitorTick(bot, "manual_admin");
     await ctx.reply(buildMonitorStatusMessage());
   });
@@ -6412,34 +7885,29 @@ export async function startBot(botToken: string) {
     await ctx.reply(buildHelpMessage());
   });
 
-  bot.action("mining_watch_prompt", async (ctx) => {
-    await ctx.answerCbQuery();
-    await ctx.reply(buildMiningWatchPrompt());
-  });
-
-  bot.action("wallets", async (ctx) => {
-    await replyWalletManagementListFromAction(ctx);
-  });
-
-  bot.action("watchlist", async (ctx) => {
-    await replyWalletManagementListFromAction(ctx);
-  });
-
-  bot.action("mw:list", async (ctx) => {
-    await replyWalletManagementListFromAction(ctx);
-  });
-
-  bot.action(/^mw:show:(.+)$/, async (ctx) => {
-    await replyWalletSettingsFromAction(ctx, String(ctx.match[1] || ""));
-  });
-
-  bot.action(/^mw:toggle:(.+)$/, async (ctx) => {
-    await toggleWalletNotificationsFromAction(ctx, String(ctx.match[1] || ""));
-  });
-
-  bot.action(/^mw:delete:(.+)$/, async (ctx) => {
-    await deleteWalletFromAction(ctx, String(ctx.match[1] || ""));
-  });
+  // The whole wallet-watch button surface (add / list / settings / toggle /
+  // delete) went with the commands on 2026-08-09 — see the note next to the
+  // command registrations.  Leaving the buttons bound while the commands were
+  // gone would have kept the removed feature reachable.
+  //
+  // Those buttons still exist in old messages sitting in people's chat
+  // history, though, and an unanswered callback query leaves the button
+  // spinning until Telegram times it out.  Answer them so the spinner stops
+  // and the user gets told why nothing happened.
+  bot.action(
+    /^(mw:.*|wallets|watchlist|mining|mining_watch_prompt)$/,
+    async (ctx) => {
+      await ctx.answerCbQuery("Bu özellik kaldırıldı.");
+      await ctx.reply(
+        [
+          "Cüzdan takip menüsü kaldırıldı.",
+          "",
+          "Cüzdan sorgulamak için: /info ackerman",
+          "Kayıt silmek için: /forget",
+        ].join("\n"),
+      );
+    },
+  );
 
   bot.action("coming_soon", async (ctx) => {
     await ctx.answerCbQuery("Coming soon");
@@ -6479,9 +7947,192 @@ export async function startBot(botToken: string) {
     await ctx.answerCbQuery("Coming soon");
     await ctx.reply(buildComingSoonMessage());
   });
-  bot.action("mining", async (ctx) => {
+  // Reply-keyboard buttons arrive as ordinary text, so each label needs its own
+  // handler. Registered before the catch-all below.
+  bot.hears(MENU_PLANS, async (ctx) => {
+    await ctx.reply(
+      [
+        "⭐ Pay with Telegram Stars",
+        "",
+        ...PLANS.map(
+          (plan) =>
+            `${plan.label} — ${plan.days} days — ${getPlanStars(plan)} ⭐ (${plan.priceUsd} USDT)`,
+        ),
+        "",
+        "To buy:",
+        ...PLANS.map((plan) => `/pay ${plan.id}`),
+        "",
+        `🎁 ${TRIAL_DAYS}-day free trial: /trial`,
+        "",
+        "To pay with crypto (USDT/TON) and manage mining, use the dashboard:",
+        "https://ackinackiradar.com",
+      ].join("\n"),
+    );
+  });
+
+  bot.hears(MENU_WALLETS, async (ctx) => {
+    await sendWalletsScreen(ctx);
+  });
+
+  // Start / pause from the wallets screen.
+  bot.action(/^mn:tg:(.+)$/, async (ctx) => {
+    const walletName = String((ctx as any).match[1] || "");
+    const chatId = ctx.chat?.id;
+    const state = readBeeMinerState();
+    const record = state.miners.find(
+      (m) => m.chatId === chatId && m.walletName === walletName,
+    );
+
+    if (!record) {
+      await ctx.answerCbQuery("Wallet not found.");
+      return;
+    }
+
+    if (record.status !== "active" && record.status !== "stopped") {
+      await ctx.answerCbQuery(`Not ready yet (${record.status}).`);
+      return;
+    }
+
+    const running = record.status === "active";
+
+    // One wallet per plan — same rule the scheduler enforces, applied here so
+    // the button gives a reason instead of appearing to work and doing nothing.
+    if (
+      !running &&
+      !isAdminChatId(chatId as number) &&
+      countActiveMinersForChat(state.miners, chatId as number) >= 1
+    ) {
+      await ctx.answerCbQuery(
+        "A plan covers one wallet. Pause the other one first.",
+        { show_alert: true },
+      );
+      return;
+    }
+
+    record.status = running ? "stopped" : "active";
+    record.lastError = null;
+    writeBeeMinerState(state);
+
+    // Drop the pooled instance when pausing, so a half-finished session does
+    // not keep running against a wallet the user just stopped.
+    if (running && record.minerAddress) {
+      beeDiscardMiner({
+        appId: record.appId,
+        minerAddress: record.minerAddress,
+        publicKey: record.publicKey,
+      });
+    }
+
+    await ctx.answerCbQuery(running ? "Paused." : "Started.");
+    await sendWalletsScreen(ctx);
+  });
+
+  // Remove — asks first, since it deletes the stored mining keys.
+  bot.action(/^mn:rm:(.+)$/, async (ctx) => {
+    const walletName = String((ctx as any).match[1] || "");
+
     await ctx.answerCbQuery();
-    await ctx.reply(buildMiningWatchPrompt());
+    await ctx.reply(
+      `🗑 Remove ${safeMessageText(walletName)}?\n\nMining stops and the stored keys are deleted. This cannot be undone.`,
+      Markup.inlineKeyboard([
+        [
+          Markup.button.callback("Yes, remove", `mn:rmy:${walletName}`),
+          Markup.button.callback("Cancel", "mn:cancel"),
+        ],
+      ]),
+    );
+  });
+
+  bot.action(/^mn:rmy:(.+)$/, async (ctx) => {
+    const walletName = String((ctx as any).match[1] || "");
+    const chatId = ctx.chat?.id;
+    const state = readBeeMinerState();
+    const record = state.miners.find(
+      (m) => m.chatId === chatId && m.walletName === walletName,
+    );
+
+    if (!record) {
+      await ctx.answerCbQuery("Wallet not found.");
+      return;
+    }
+
+    if (record.minerAddress) {
+      beeDiscardMiner({
+        appId: record.appId,
+        minerAddress: record.minerAddress,
+        publicKey: record.publicKey,
+      });
+    }
+
+    state.miners = state.miners.filter((m) => m.id !== record.id);
+    writeBeeMinerState(state);
+
+    console.log("Miner removed via wallets screen:", {
+      chatId,
+      walletName: record.walletName,
+      previousStatus: record.status,
+    });
+
+    await ctx.answerCbQuery("Removed.");
+    await sendWalletsScreen(ctx);
+  });
+
+  bot.action("mn:cancel", async (ctx) => {
+    await ctx.answerCbQuery("Cancelled.");
+  });
+
+  // Add: force_reply turns the next message into the wallet name, so nobody
+  // has to remember a command.
+  bot.action("mn:add", async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.reply(WALLET_ADD_PROMPT, Markup.forceReply());
+  });
+
+  bot.hears(MENU_PANEL, async (ctx) => {
+    // This is the only place that explains how to get started, now that wallet
+    // connection lives on the dashboard rather than in the bot.
+    await ctx.reply(
+      [
+        "🌐 Dashboard",
+        "",
+        "Connect a wallet, start/stop mining, watch the live reward feed,",
+        "follow the cycle and pay with USDT/TON — all in one place:",
+        "",
+        "https://ackinackiradar.com",
+        "",
+        "How to get started:",
+        "1) Open the link and press “Telegram ile devam et”",
+        "2) Enter your Acki Nacki wallet name and connect it",
+        "3) Approve the request in your wallet app, then press Check",
+        "",
+        "⚠️ Sign in with Telegram, not with the wallet-name option —",
+        "a subscription bought here is tied to your Telegram account.",
+      ].join("\n"),
+    );
+  });
+
+  bot.hears(MENU_HELP, async (ctx) => {
+    await ctx.reply(buildHelpMessage());
+  });
+
+  // The "Add wallet" button asks with force_reply; this catches the answer.
+  // Matching on the prompt text of the replied-to message is what Telegram
+  // gives us — there is no per-request id on a force_reply.
+  bot.on("text", async (ctx, next) => {
+    const replyTo = (ctx.message as any)?.reply_to_message;
+
+    if (!replyTo || String(replyTo.text || "") !== WALLET_ADD_PROMPT) {
+      return next();
+    }
+
+    const walletName = String(ctx.message?.text || "").trim();
+
+    if (!walletName || walletName.startsWith("/")) {
+      await ctx.reply("That does not look like a wallet name. Press “Add wallet” again.");
+      return;
+    }
+
+    await startWalletConnect(ctx, walletName);
   });
 
   bot.on("text", async (ctx) => {
@@ -6497,22 +8148,16 @@ export async function startBot(botToken: string) {
   });
 
   const fullCommandList = [
-    { command: "start", description: "Start Acki Nacki Radar" },
-    { command: "id", description: "Show your Telegram ID" },
-    { command: "info", description: "Show wallet radar" },
-    { command: "watch", description: "Monitor a wallet" },
-    { command: "unwatch", description: "Stop monitoring a wallet" },
-    { command: "wallets", description: "Show monitored wallets" },
-    { command: "status", description: "Show mining summary" },
-    { command: "miner_connect", description: "Connect a wallet for cloud mining" },
-    { command: "miner_check", description: "Confirm cloud mining connection" },
-    { command: "miner_status", description: "Show cloud mining status" },
-    { command: "miner_start", description: "Start cloud mining" },
-    { command: "miner_stop", description: "Stop cloud mining for a wallet" },
-    { command: "plans", description: "Show cloud mining subscription plans" },
-    { command: "plan_buy", description: "Buy a subscription plan" },
-    { command: "plan_status", description: "Show your subscription status" },
-    { command: "help", description: "Show help" },
+    // The two menus are split by subject, not duplicated:
+    //   "/" menu  -> the radar side: wallet lookup, plus start/help
+    //   keyboard  -> the paid side: Stars purchase and the dashboard
+    // Deliberately NO mining command here — mining is managed on the
+    // dashboard, and listing /miner_* in both places is what made the bot feel
+    // like it had two competing menus. They still work when typed.
+    { command: "start", description: "Open the menu" },
+    { command: "info", description: "Look up a wallet" },
+    { command: "radar_wallets", description: "Radar records / remove one" },
+    { command: "help", description: "Help" },
   ];
   const groupCommandList = [
     { command: "info", description: "Show wallet radar" },
@@ -6556,6 +8201,7 @@ export async function startBot(botToken: string) {
 
   startBeeMiningScheduler();
   startPaymentsCheckScheduler(bot);
+  startTonPaymentsScheduler(bot);
 
   const me = await bot.telegram.getMe();
   console.log(`Telegram bot çalışıyor: @${me.username}`);

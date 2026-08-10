@@ -20,6 +20,33 @@ import {
   PLANS,
   type Plan,
 } from "./services/payments";
+import {
+  buildInvoiceCode,
+  fetchTonUsdRate,
+  formatTonAmount,
+  formatUsdtAmount,
+  usdToTonRaw,
+  usdtAmountToRaw,
+} from "./services/tonPayments";
+
+// Same switches the bot's TON checker reads — the dashboard only issues the
+// invoices, that checker is what credits them.
+// Same env var the bot reads, so "admin" means the same thing on both sides.
+// Compared as strings because that is how the bot stores them.
+const DASHBOARD_ADMIN_IDS = new Set(
+  String(process.env.BOT_ADMIN_IDS || process.env.ADMIN_TELEGRAM_IDS || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean),
+);
+
+const TON_PAYMENTS_ADDRESS = String(process.env.TON_PAYMENTS_ADDRESS || "").trim();
+const TON_PAYMENTS_CHECK_ENABLED =
+  String(process.env.TON_PAYMENTS_CHECK_ENABLED || "false").toLowerCase() ===
+    "true" && Boolean(TON_PAYMENTS_ADDRESS);
+const TONAPI_KEY = String(process.env.TONAPI_KEY || "").trim() || undefined;
+const TON_INVOICE_EXPIRY_MS =
+  Number(process.env.TON_INVOICE_EXPIRY_MINUTES || 120) * 60 * 1000;
 
 type UserRecord = {
   telegramId: number;
@@ -906,6 +933,15 @@ const BEE_CYCLE_TAP_CAP = Number(process.env.BEE_CYCLE_TAP_CAP || 12000);
 // extra currency (`balance_other`, currency id 1) on the wallet's popitGame
 // account. So sample that total on a tight cadence and difference it; each
 // positive step is one reward.
+// Last successful chain reading, kept so a failed poll degrades to "slightly
+// old" instead of "gone". Ten minutes is well past the point where the numbers
+// stop being interesting, so beyond it the tiles go empty as before.
+const CHAIN_STATS_MAX_STALE_MS = 10 * 60 * 1000;
+let lastGoodChainStats: { data: any; atMs: number } | null = null;
+
+// The dashboard calls the feed stale past 60s, so force a read before that.
+const REWARD_FEED_FORCE_READ_AFTER_MS = 45 * 1000;
+
 const rewardFeedPollRaw = Number(process.env.REWARD_FEED_POLL_MS || 15000);
 // The reward feed is a small, per-miner chain read. Keep it responsive without
 // allowing an accidental zero/very-low environment value to hammer the RPC.
@@ -1042,7 +1078,23 @@ async function pollRewardFeed(): Promise<void> {
     (m) => m.status === "active",
   );
 
-  if (isBeeChainCritical()) {
+  // Yield to Bee while it is submitting — but not forever. The autopilot runs
+  // back-to-back sessions, so this guard held almost continuously and
+  // `rewardLastChainReadAt` went permanently stale, which is what put
+  // "Zincir bağlantısı bekleniyor" on the dashboard even though the chain was
+  // perfectly reachable. Let one read through when the last successful one is
+  // older than this: it is a single account query (~70ms on the healthy half of
+  // the endpoint), which is not what threatens a submission.
+  const oldestReadMs = Math.min(
+    ...miners.map((m) =>
+      Date.parse(rewardLastChainReadAt.get(m.walletName) ?? "") || 0,
+    ),
+  );
+  const readOverdue =
+    !Number.isFinite(oldestReadMs) ||
+    Date.now() - oldestReadMs > REWARD_FEED_FORCE_READ_AFTER_MS;
+
+  if (isBeeChainCritical() && !readOverdue) {
     return;
   }
 
@@ -1338,6 +1390,28 @@ function requireDashboardAuth(req: any, res: any, next: any) {
   next();
 }
 
+// Admin-only endpoints. Built on the same Telegram session as the dashboard —
+// no separate password to leak, and an id can only reach these by having signed
+// in through Telegram OIDC AND being listed in BOT_ADMIN_IDS.
+function requireAdminAuth(req: any, res: any, next: any) {
+  const telegramId = getAuthenticatedTelegramId(req);
+
+  if (telegramId === null) {
+    res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+    return;
+  }
+
+  if (!DASHBOARD_ADMIN_IDS.has(String(telegramId))) {
+    // 404 rather than 403: an admin surface should not confirm its own
+    // existence to someone who is not one.
+    res.status(404).json({ ok: false, error: "NOT_FOUND" });
+    return;
+  }
+
+  req.telegramId = telegramId;
+  next();
+}
+
 // Fix: wallet-only login (no Telegram account required). Everything in
 // this system is keyed off a numeric "account id" (called chatId, since it
 // originally only ever came from Telegram). For a wallet-only account we
@@ -1596,6 +1670,23 @@ app.use(express.static(path.join(process.cwd(), "public")));
   // --- Wallet-only login (no Telegram account needed) ---
   // Step 1: prove ownership of the wallet the same way /miner_connect does
   // (generate an app-specific mining key, user approves it in AN Wallet).
+  // Wallet-name sign-in was removed from the UI on 2026-08-10; this refuses it
+  // at the API too, so it cannot be reached by hand. It filed the account under
+  // a NEGATIVE virtual chatId — such a user can never be matched to a
+  // subscription and can never mine — and it quietly created a second miner
+  // record for a wallet the person had already connected.
+  //
+  // Registered BEFORE the original handlers on purpose: Express takes the first
+  // matching route, so the old ones simply never run. Putting an early return
+  // inside them instead would leave their bodies unreachable, which breaks
+  // TypeScript's narrowing and produces a wall of false errors.
+  app.post(
+    ["/api/auth/wallet/start", "/api/auth/wallet/confirm"],
+    (_req, res) => {
+      res.status(410).json({ ok: false, error: "WALLET_LOGIN_REMOVED" });
+    },
+  );
+
   app.post("/api/auth/wallet/start", async (req, res) => {
     const walletName = String(req.body?.walletName || "").trim();
 
@@ -1632,7 +1723,10 @@ app.use(express.static(path.join(process.cwd(), "public")));
         lastTapsSent: null,
         lastRewardAt: null,
         createdAt: new Date().toISOString(),
-      };
+        // Stored so a repeated "Connect" can hand back the SAME link instead of
+        // minting a keypair that invalidates the approval already in flight.
+        deepLink: keys.deepLink,
+      } as BeeMinerRecord;
 
       if (existingIndex >= 0) {
         state.miners[existingIndex] = record;
@@ -1681,8 +1775,13 @@ app.use(express.static(path.join(process.cwd(), "public")));
         appId: record.appId,
         minerAddress: record.minerAddress,
         expectedOwnerPublic: record.publicKey,
-        maxAttempts: 3,
-        intervalMs: 1000,
+        // 36s, matching the bot. It was 3s here, which is far less time than
+        // the chain needs to publish the key after the user approves — the
+        // dashboard gave up almost immediately and the connection appeared to
+        // hang forever. The bot hit exactly this and was fixed long ago; these
+        // two call sites were missed.
+        maxAttempts: 30,
+        intervalMs: 1200,
       });
 
       const handle = await beeCreateMiner({
@@ -1754,7 +1853,9 @@ app.use(express.static(path.join(process.cwd(), "public")));
         priceShellRaw: plan.priceShellRaw,
       })),
       paymentsWallet: PAYMENTS_WALLET_NAME,
-      paymentsLive: PAYMENTS_CHECK_ENABLED,
+      // Drives the dashboard's Buy buttons. Follows the TON rail now, since
+      // that is what this page actually sells through.
+      paymentsLive: TON_PAYMENTS_CHECK_ENABLED,
       cycle: {
         tapCap: BEE_CYCLE_TAP_CAP,
         hours: BEE_CYCLE_HOURS,
@@ -1805,6 +1906,20 @@ app.use(express.static(path.join(process.cwd(), "public")));
       return;
     }
 
+    // One wallet per plan. The scheduler enforces this too, but refusing here
+    // means the dashboard can say why instead of showing a wallet that looks
+    // started and never mines.
+    if (
+      shouldRun &&
+      !DASHBOARD_ADMIN_IDS.has(String(chatId)) &&
+      state.miners.some(
+        (miner) => miner.chatId === chatId && miner.status === "active",
+      )
+    ) {
+      res.status(409).json({ ok: false, error: "ONE_WALLET_PER_PLAN" });
+      return;
+    }
+
     record.status = shouldRun ? "active" : "stopped";
     record.lastError = null;
     writeBeeMinerState(state);
@@ -1833,6 +1948,52 @@ app.use(express.static(path.join(process.cwd(), "public")));
     setMinerRunning(req, res, false);
   });
 
+  // Removal, as opposed to /stop which only flips the status. Until now there
+  // was no way at all — on the dashboard or in the bot — to get a wallet out of
+  // our storage, and that record holds the user's mining secret key in plain
+  // text. Someone asking to disconnect has to be able to actually leave.
+  app.post("/api/dashboard/miner/remove", requireDashboardAuth, (req: any, res) => {
+    const chatId = req.telegramId;
+    const walletName = String(req.body?.walletName || "").trim();
+
+    if (!walletName) {
+      res.status(400).json({ ok: false, error: "WALLET_NAME_REQUIRED" });
+      return;
+    }
+
+    const state = readBeeMinerState();
+    const record = state.miners.find(
+      (miner) => miner.chatId === chatId && miner.walletName === walletName,
+    );
+
+    if (!record) {
+      res.status(404).json({ ok: false, error: "MINER_NOT_FOUND" });
+      return;
+    }
+
+    // Drop the pooled wasm instance BEFORE the record goes, while its keys are
+    // still readable — otherwise a live session keeps running against a miner
+    // nobody owns any more.
+    if (record.minerAddress) {
+      beeDiscardMiner({
+        appId: record.appId,
+        minerAddress: record.minerAddress,
+        publicKey: record.publicKey,
+      });
+    }
+
+    state.miners = state.miners.filter((miner) => miner.id !== record.id);
+    writeBeeMinerState(state);
+
+    console.log("Dashboard miner removed:", {
+      walletName: record.walletName,
+      chatId,
+      previousStatus: record.status,
+    });
+
+    res.json({ ok: true, walletName: record.walletName, removed: true });
+  });
+
   // --- Dashboard: connect a wallet for cloud mining ---
   app.post("/api/dashboard/miner/connect", requireDashboardAuth, async (req: any, res) => {
     const chatId = req.telegramId;
@@ -1849,12 +2010,29 @@ app.use(express.static(path.join(process.cwd(), "public")));
     }
 
     try {
-      const keys = await beeGenerateMiningKeys(BEE_APP_ID);
-      const minerAddress = await beeResolveMinerAddress({ appId: BEE_APP_ID, walletName });
-
       const state = readBeeMinerState();
       const id = `${chatId}:${walletName}`;
       const existingIndex = state.miners.findIndex((m) => m.id === id);
+      const existing = existingIndex >= 0 ? state.miners[existingIndex] : undefined;
+
+      // Reuse the pending connection instead of minting a new keypair.
+      //
+      // This regenerated keys on EVERY press, which quietly broke the retry
+      // everyone reaches for: approve the QR, nothing seems to happen, press
+      // "Connect" again — and that second press invalidates the approval that
+      // was already on its way, because the chain now holds a key we just threw
+      // away. The result is a wallet that can never finish connecting.
+      if (
+        existing &&
+        existing.status === "pending_authorization" &&
+        (existing as any).deepLink
+      ) {
+        res.json({ ok: true, deepLink: (existing as any).deepLink, reused: true });
+        return;
+      }
+
+      const keys = await beeGenerateMiningKeys(BEE_APP_ID);
+      const minerAddress = await beeResolveMinerAddress({ appId: BEE_APP_ID, walletName });
 
       const record: BeeMinerRecord = {
         id,
@@ -1870,7 +2048,10 @@ app.use(express.static(path.join(process.cwd(), "public")));
         lastTapsSent: null,
         lastRewardAt: null,
         createdAt: new Date().toISOString(),
-      };
+        // Stored so a repeated "Connect" can hand back the SAME link instead of
+        // minting a keypair that invalidates the approval already in flight.
+        deepLink: keys.deepLink,
+      } as BeeMinerRecord;
 
       if (existingIndex >= 0) {
         state.miners[existingIndex] = record;
@@ -1912,8 +2093,13 @@ app.use(express.static(path.join(process.cwd(), "public")));
         appId: record.appId,
         minerAddress: record.minerAddress,
         expectedOwnerPublic: record.publicKey,
-        maxAttempts: 3,
-        intervalMs: 1000,
+        // 36s, matching the bot. It was 3s here, which is far less time than
+        // the chain needs to publish the key after the user approves — the
+        // dashboard gave up almost immediately and the connection appeared to
+        // hang forever. The bot hit exactly this and was fixed long ago; these
+        // two call sites were missed.
+        maxAttempts: 30,
+        intervalMs: 1200,
       });
 
       const handle = await beeCreateMiner({
@@ -1931,6 +2117,15 @@ app.use(express.static(path.join(process.cwd(), "public")));
 
       res.json({ ok: true, status: "active" });
     } catch (error) {
+      // Logged, not just returned. This swallowed the reason silently, so a
+      // wallet that would not connect gave the operator nothing to go on.
+      console.error("Dashboard miner check failed:", {
+        chatId,
+        walletName,
+        expectedOwnerPublic: record.publicKey.slice(0, 16),
+        message: error instanceof Error ? error.message : String(error),
+      });
+
       res.status(409).json({
         ok: false,
         error: "NOT_YET_APPROVED",
@@ -1940,8 +2135,11 @@ app.use(express.static(path.join(process.cwd(), "public")));
   });
 
   // --- Dashboard: buy a plan ---
-  app.post("/api/dashboard/plan/buy", requireDashboardAuth, (req: any, res) => {
-    if (!PAYMENTS_CHECK_ENABLED) {
+  // Crypto payment lives here, on the dashboard; the bot sells with Telegram
+  // Stars. This used to mint SHELL invoices behind the SHELL feature flag, so
+  // it was both switched off and quoting the wrong asset.
+  app.post("/api/dashboard/plan/buy", requireDashboardAuth, async (req: any, res) => {
+    if (!TON_PAYMENTS_CHECK_ENABLED) {
       res.status(503).json({ ok: false, error: "PAYMENTS_NOT_LIVE" });
       return;
     }
@@ -1955,36 +2153,67 @@ app.use(express.static(path.join(process.cwd(), "public")));
       return;
     }
 
-    const minerState = readBeeMinerState();
-    const activeMiners = minerState.miners.filter(
-      (miner) => miner.chatId === chatId && miner.status === "active",
-    );
-
-    if (!activeMiners.length) {
-      res.status(409).json({ ok: false, error: "NO_ACTIVE_WALLET" });
-      return;
-    }
-
+    // Deliberately no "must already have an active mining wallet" check. The
+    // invoice code identifies the payer, and requiring a wallet first
+    // recreated the catch-22 where mining needed a subscription and a
+    // subscription needed a miner.
     const paymentsState = readPaymentsState();
     const now = Date.now();
-    const amountRaw = allocateInvoiceAmountRaw(plan, paymentsState);
-    const invoice: PendingInvoice = {
-      id: `${chatId}:${plan.id}:${now}`,
-      chatId,
-      planId: plan.id,
-      amountRaw,
-      createdAt: new Date(now).toISOString(),
-      expiresAt: new Date(now + 30 * 60 * 1000).toISOString(),
-    };
 
-    paymentsState.pendingInvoices.push(invoice);
-    writePaymentsState(paymentsState);
+    // Reuse a live invoice rather than minting a second code for the same
+    // plan — two open codes only invites paying the wrong one.
+    const existing = paymentsState.pendingInvoices.find(
+      (item: any) =>
+        item.chatId === chatId &&
+        item.planId === plan.id &&
+        item.currency === "usdt" &&
+        new Date(item.expiresAt).getTime() > now,
+    );
+
+    let invoice: any = existing;
+
+    if (!invoice) {
+      // Quote TON alongside USDT so the payer can use whichever they hold, and
+      // lock the rate into the invoice so a price move during the payment
+      // window costs nothing. No rate means USDT only — selling at a guessed
+      // rate would be worse than offering one currency.
+      let amountTonRaw: string | undefined;
+
+      try {
+        const rate = await fetchTonUsdRate(TONAPI_KEY);
+        amountTonRaw = usdToTonRaw(plan.priceUsd, rate);
+      } catch (error) {
+        console.warn("Dashboard invoice: TON rate unavailable, USDT only:", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      invoice = {
+        id: `${chatId}:${plan.id}:${now}`,
+        chatId,
+        planId: plan.id,
+        amountRaw: usdtAmountToRaw(plan.priceUsd),
+        createdAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + TON_INVOICE_EXPIRY_MS).toISOString(),
+        code: buildInvoiceCode(),
+        currency: "usdt",
+        ...(amountTonRaw ? { amountTonRaw } : {}),
+      };
+
+      paymentsState.pendingInvoices.push(invoice);
+      writePaymentsState(paymentsState);
+    }
 
     res.json({
       ok: true,
-      amountRaw: invoice.amountRaw,
-      paymentsWallet: PAYMENTS_WALLET_NAME,
-      walletNames: activeMiners.map((m) => m.walletName),
+      currency: "usdt",
+      network: "TON",
+      address: TON_PAYMENTS_ADDRESS,
+      code: invoice.code,
+      amountUsdt: formatUsdtAmount(invoice.amountRaw),
+      amountTon: invoice.amountTonRaw
+        ? formatTonAmount(invoice.amountTonRaw)
+        : null,
       expiresAt: invoice.expiresAt,
     });
   });
@@ -2015,13 +2244,188 @@ app.use(express.static(path.join(process.cwd(), "public")));
 
     try {
       chain = await getAckiNetworkStats();
+      lastGoodChainStats = { data: chain, atMs: Date.now() };
     } catch (error) {
       console.error("Radar stats: chain half failed:", {
         message: error instanceof Error ? error.message : String(error),
       });
     }
 
-    res.json({ ok: true, chain, mining, tpsHistory: getTpsHistorySummary() });
+    // Measured 2026-08-10: mainnet's block index answers `blocks(last:N)` only
+    // about one time in eight ("pool timed out"), while account queries on the
+    // same endpoint are fine. Returning null on every miss made the page drop
+    // its TPS and block tiles at random. Serve the last good reading with its
+    // age instead, and let the page decide how to label it — a number a minute
+    // old is far more useful than an empty tile.
+    let chainStale = false;
+
+    if (!chain && lastGoodChainStats) {
+      const ageMs = Date.now() - lastGoodChainStats.atMs;
+
+      if (ageMs <= CHAIN_STATS_MAX_STALE_MS) {
+        chain = lastGoodChainStats.data;
+        chainStale = true;
+      }
+    }
+
+    res.json({
+      ok: true,
+      chain,
+      chainStale,
+      chainAgeSeconds: lastGoodChainStats
+        ? Math.round((Date.now() - lastGoodChainStats.atMs) / 1000)
+        : null,
+      mining,
+      tpsHistory: getTpsHistorySummary(),
+    });
+  });
+
+  // --- Admin overview ---
+  //
+  // Deliberately read-only apart from the two repair actions below. Everything
+  // here already exists in the data files; the value is having it in one place
+  // instead of over SSH.
+  app.get("/api/admin/overview", requireAdminAuth, (_req: any, res) => {
+    const now = Date.now();
+    const users = readUsers();
+    const minerState = readBeeMinerState();
+    const payments = readPaymentsState();
+    const monitor = (() => {
+      try {
+        const file = path.join(process.cwd(), "data", "mining-monitor.json");
+        const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+        return Array.isArray(parsed?.watches) ? parsed.watches : [];
+      } catch {
+        return [];
+      }
+    })();
+
+    const byStatus: Record<string, number> = {};
+    for (const miner of minerState.miners) {
+      byStatus[miner.status] = (byStatus[miner.status] || 0) + 1;
+    }
+
+    const subs = Object.entries(payments.subscriptions || {}).map(
+      ([chatId, sub]: any) => ({
+        chatId: Number(chatId),
+        planId: sub.planId,
+        trial: Boolean(sub.trial),
+        activeUntil: sub.activeUntil,
+        active: new Date(sub.activeUntil).getTime() > now,
+      }),
+    );
+
+    res.json({
+      ok: true,
+      users: {
+        total: users.length,
+        // Telegram sign-ins are the ones with a positive id; negatives are
+        // leftovers from the removed wallet-name login.
+        telegram: users.filter((u: any) => Number(u.telegramId) > 0).length,
+      },
+      miners: {
+        total: minerState.miners.length,
+        byStatus,
+        list: minerState.miners.map((m) => ({
+          chatId: m.chatId,
+          walletName: m.walletName,
+          status: m.status,
+          lastError: m.lastError,
+          lastSessionAt: m.lastSessionAt ?? null,
+          lastRewardAt: m.lastRewardAt ?? null,
+          lastTapSum: (m as any).lastTapSum ?? null,
+          createdAt: m.createdAt,
+        })),
+      },
+      subscriptions: {
+        total: subs.length,
+        active: subs.filter((s) => s.active).length,
+        // Written by the bot; the server's PaymentsState type does not
+        // declare these two, so they are read loosely.
+        trials: ((payments as any).trialUsed || []).length,
+        list: subs,
+      },
+      payments: {
+        pendingInvoices: (payments.pendingInvoices || []).length,
+        starsCharges: ((payments as any).starsCharges || []).length,
+        tonLastLt: (payments as any).tonLastLt ?? 0,
+      },
+      radar: {
+        watches: monitor.length,
+        systemWatches: monitor.filter((w: any) => w.chatId === 0).length,
+      },
+      updatedAt: new Date().toISOString(),
+    });
+  });
+
+  // Repair action: drop a miner record (and its stored keys) for any user.
+  app.post("/api/admin/miner/remove", requireAdminAuth, (req: any, res) => {
+    const chatId = Number(req.body?.chatId);
+    const walletName = String(req.body?.walletName || "").trim();
+    const state = readBeeMinerState();
+    const record = state.miners.find(
+      (m) => m.chatId === chatId && m.walletName === walletName,
+    );
+
+    if (!record) {
+      res.status(404).json({ ok: false, error: "MINER_NOT_FOUND" });
+      return;
+    }
+
+    if (record.minerAddress) {
+      beeDiscardMiner({
+        appId: record.appId,
+        minerAddress: record.minerAddress,
+        publicKey: record.publicKey,
+      });
+    }
+
+    state.miners = state.miners.filter((m) => m.id !== record.id);
+    writeBeeMinerState(state);
+
+    console.log("Admin removed miner:", {
+      byAdmin: req.telegramId,
+      chatId,
+      walletName,
+    });
+
+    res.json({ ok: true });
+  });
+
+  // Repair action: grant days to an account by hand — for a payment that
+  // arrived without a usable code, or an apology.
+  app.post("/api/admin/subscription/grant", requireAdminAuth, (req: any, res) => {
+    const chatId = Number(req.body?.chatId);
+    const days = Number(req.body?.days);
+    const planId = String(req.body?.planId || "standard");
+
+    if (!Number.isFinite(chatId) || !Number.isFinite(days) || days <= 0) {
+      res.status(400).json({ ok: false, error: "INVALID_INPUT" });
+      return;
+    }
+
+    const state = readPaymentsState();
+    const existing = state.subscriptions[String(chatId)];
+    const base =
+      existing && new Date(existing.activeUntil).getTime() > Date.now()
+        ? new Date(existing.activeUntil).getTime()
+        : Date.now();
+    const activeUntil = new Date(
+      base + days * 24 * 60 * 60 * 1000,
+    ).toISOString();
+
+    state.subscriptions[String(chatId)] = { planId, activeUntil } as any;
+    writePaymentsState(state);
+
+    console.log("Admin granted subscription:", {
+      byAdmin: req.telegramId,
+      chatId,
+      planId,
+      days,
+      activeUntil,
+    });
+
+    res.json({ ok: true, activeUntil });
   });
 
   app.get("/api/radar/wallet-count", (_req, res) => {
