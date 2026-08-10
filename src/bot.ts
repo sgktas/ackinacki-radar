@@ -36,6 +36,11 @@ import {
   usdtAmountToRaw,
 } from "./services/tonPayments";
 import {
+  getChainEpochClock,
+  setChainEpochClock,
+  type ChainEpochClock,
+} from "./services/epochClock";
+import {
   collectReward as beeCollectReward,
   canStartMining as beeCanStartMining,
   createMiner as beeCreateMiner,
@@ -2203,10 +2208,35 @@ function buildWalletsKeyboard(miners: BeeMinerRecord[]) {
   return Markup.inlineKeyboard(rows);
 }
 
+function formatEpochRemaining(seconds: number): string {
+  const safe = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safe / 60);
+  const rest = safe % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+}
+
+function buildEpochClockText(): string {
+  const clock = getChainEpochClock();
+  if (!clock) return "⏱ Zincir epochu: senkronizasyon bekleniyor";
+
+  const ageSeconds = Math.max(
+    0,
+    Math.floor((Date.now() - new Date(clock.observedAt).getTime()) / 1000),
+  );
+
+  if (!Number.isFinite(ageSeconds) || ageSeconds > 120) {
+    return `⏱ Zincir epochu: ${clock.epochStart} · saat yenileniyor`;
+  }
+
+  return `⏱ Zincir epochu: ${clock.epochStart} · kalan ${formatEpochRemaining(clock.remainingSeconds - ageSeconds)}`;
+}
+
 function buildWalletsText(miners: BeeMinerRecord[]) {
   if (!miners.length) {
     return [
       "👛 Your wallets (0)",
+      "",
+      buildEpochClockText(),
       "",
       "No wallet connected yet. Press “Add wallet” to start.",
     ].join("\n");
@@ -2214,6 +2244,8 @@ function buildWalletsText(miners: BeeMinerRecord[]) {
 
   return [
     `👛 Your wallets (${miners.length})`,
+    "",
+    buildEpochClockText(),
     "",
     ...miners.map(
       (miner) => `• ${safeMessageText(miner.walletName)} — ${miner.status}`,
@@ -4755,6 +4787,33 @@ const BEE_BLOCK_ANCHOR_RETRY_S = 30;
 let beeBlockAnchor: { seqNo: number; chainTs: number } | null = null;
 let beeBlockAnchorAttemptTs = 0;
 
+function updateChainEpochClock(
+  seqNo: number,
+  chainTs: number,
+  source: ChainEpochClock["source"],
+): string {
+  const currentSeqNo = Math.floor(seqNo);
+  const epochStartNumber =
+    Math.floor(currentSeqNo / BEE_EPOCH_BLOCK_PERIOD) * BEE_EPOCH_BLOCK_PERIOD;
+  const nextEpochSeqNo = epochStartNumber + BEE_EPOCH_BLOCK_PERIOD;
+  const remainingSeconds = Math.max(
+    0,
+    Math.ceil((nextEpochSeqNo - currentSeqNo) / BEE_BLOCKS_PER_SECOND),
+  );
+
+  setChainEpochClock({
+    epochStart: String(epochStartNumber),
+    currentSeqNo,
+    nextEpochSeqNo,
+    remainingSeconds,
+    chainTimestamp: chainTs,
+    observedAt: new Date().toISOString(),
+    source,
+  });
+
+  return String(epochStartNumber);
+}
+
 async function ackiGraphQl(query: string, timeoutMs: number): Promise<any> {
   const res = await fetch(ACKI_MAINNET_GRAPHQL_URL, {
     method: "POST",
@@ -4786,11 +4845,6 @@ async function ackiGraphQl(query: string, timeoutMs: number): Promise<any> {
 // rate in between. A short extrapolation is far more accurate than a value
 // from a different clock, and it keeps epoch tracking on ONE source.
 async function readChainEpoch5mStart(): Promise<string | null> {
-  const toEpoch = (seqNo: number) =>
-    String(
-      Math.floor(seqNo / BEE_EPOCH_BLOCK_PERIOD) * BEE_EPOCH_BLOCK_PERIOD,
-    );
-
   // Read the chain clock first. Measured 2026-08-10 on mainnet: this answers in
   // ~70ms and succeeded 6/6, while `blocks(last:1)` in the SAME request failed
   // 5/6 with "pool timed out" and costs a fixed ~5s when it does. The endpoint's
@@ -4840,7 +4894,7 @@ async function readChainEpoch5mStart(): Promise<string | null> {
 
       if (Number.isFinite(seqNo) && seqNo > 0 && Number.isFinite(pairedTs)) {
         beeBlockAnchor = { seqNo, chainTs: pairedTs };
-        return toEpoch(seqNo);
+        return updateChainEpochClock(seqNo, pairedTs, "chain");
       }
     } catch {
       // Keep the existing anchor and extrapolate below.
@@ -4860,7 +4914,7 @@ async function readChainEpoch5mStart(): Promise<string | null> {
   const estimated =
     beeBlockAnchor.seqNo + elapsedS * BEE_BLOCKS_PER_SECOND;
 
-  return toEpoch(Math.floor(estimated));
+  return updateChainEpochClock(estimated, chainTs, "estimated");
 }
 
 async function observeBeeEpoch(
@@ -7666,7 +7720,19 @@ export async function startBot(botToken: string) {
       return bits.join(" | ");
     });
 
-    await ctx.reply(["⛏️ Bulut Madencilik Durumu", "", ...lines].join("\n"));
+    await ctx.reply(
+      [
+        "⛏️ Bulut Madencilik Durumu",
+        "",
+        buildEpochClockText(),
+        "",
+        ...lines,
+      ].join("\n"),
+    );
+  });
+
+  bot.command("epoch", async (ctx) => {
+    await ctx.reply(buildEpochClockText());
   });
 
   bot.command("miner_stop", async (ctx) => {
@@ -8486,6 +8552,7 @@ export async function startBot(botToken: string) {
     { command: "start", description: "Open the menu" },
     { command: "info", description: "Look up a wallet" },
     { command: "radar_wallets", description: "Radar records / remove one" },
+    { command: "epoch", description: "Show chain epoch countdown" },
     { command: "help", description: "Help" },
   ];
   const groupCommandList = [

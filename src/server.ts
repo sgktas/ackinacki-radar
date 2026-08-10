@@ -33,6 +33,7 @@ import {
   usdToTonRaw,
   usdtAmountToRaw,
 } from "./services/tonPayments";
+import { getChainEpochClock } from "./services/epochClock";
 
 // Same switches the bot's TON checker reads — the dashboard only issues the
 // invoices, that checker is what credits them.
@@ -1911,6 +1912,7 @@ app.use(express.static(path.join(process.cwd(), "public")));
       nacklPaymentsLive:
         NACKL_PAYMENTS_CHECK_ENABLED && paymentsState.nacklBaselineReady === true,
       nacklPaymentsWallet: NACKL_PAYMENTS_WALLET_NAME,
+      epochClock: getChainEpochClock(),
       cycle: {
         tapCap: BEE_CYCLE_TAP_CAP,
         hours: BEE_CYCLE_HOURS,
