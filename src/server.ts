@@ -12,6 +12,7 @@ import {
   generateMiningKeys as beeGenerateMiningKeys,
   isBeeChainCritical,
   resolveMinerAddress as beeResolveMinerAddress,
+  runMiningSession as beeRunMiningSession,
   waitForMiningKeyPropagation as beeWaitForMiningKeyPropagation,
 } from "./services/beeMiner";
 import {
@@ -2109,7 +2110,20 @@ app.use(express.static(path.join(process.cwd(), "public")));
         secretKey: record.secretKey,
       });
 
-      handle.miner.add_tap(Math.floor(Math.random() * 1000), Math.floor(Math.random() * 1000));
+      // First-tap verification must go through a real (very short) session.
+      // add_tap() on a freshly constructed Miner always throws "No running
+      // workers to add tap to" — start() is what spawns the workers. This
+      // endpoint called add_tap() directly, so dashboard connect could never
+      // succeed even after a perfectly good approval, while /miner_connect in
+      // the bot worked because it already used this helper.
+      const verification = await beeRunMiningSession(handle, {
+        durationMs: 3000,
+        tapCount: 1,
+      });
+
+      if (verification.error) {
+        throw new Error(verification.error);
+      }
 
       record.status = "active";
       record.lastError = null;
