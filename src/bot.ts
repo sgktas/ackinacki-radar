@@ -6630,10 +6630,11 @@ export async function startBot(botToken: string) {
   // record shape are deliberately left in place so this can be restored.
   // --- Telegram Stars ---
   //
-  // Stars need no payment provider: `currency: "XTR"` with an empty
-  // provider_token, and Telegram handles collection. Telegraf 4.16.3 predates
-  // Stars so its types do not know XTR; the values pass straight through to the
-  // Bot API, hence the casts.
+  // Stars need no payment provider: `currency: "XTR"` and provider_token must
+  // be omitted completely. Sending an empty provider_token is accepted by
+  // some Bot API versions but Telegram clients can then fail during top-up
+  // with PROVIDER_ACCOUNT_INVALID. Telegraf 4.16.3 predates Stars, so the
+  // values pass through via the cast below.
   bot.command("pay", async (ctx) => {
     const planId = getCommandArgument(ctx.message?.text).trim().toLowerCase();
     const chatId = ctx.chat?.id;
@@ -6677,9 +6678,13 @@ export async function startBot(botToken: string) {
         description: `Acki Nacki cloud mining for ${plan.days} days. Activates as soon as the payment clears.`,
         // Echoed back on successful_payment; this is how we know what was bought.
         payload: `plan:${plan.id}:${chatId}`,
-        provider_token: "",
         currency: "XTR",
         prices: [{ label: `${plan.label} ${plan.days} gün`, amount: stars }],
+      });
+      console.log("Stars invoice sent:", {
+        chatId,
+        plan: plan.id,
+        stars,
       });
     } catch (error) {
       console.error("Stars invoice failed:", {
