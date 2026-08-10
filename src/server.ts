@@ -18,6 +18,8 @@ import {
 import {
   buildInvoiceAmountRaw,
   getPlanById,
+  getPlanStars,
+  getPlanStarsPriceUsd,
   PLANS,
   type Plan,
 } from "./services/payments";
@@ -1852,11 +1854,14 @@ app.use(express.static(path.join(process.cwd(), "public")));
         days: plan.days,
         priceUsd: plan.priceUsd,
         priceShellRaw: plan.priceShellRaw,
+        stars: getPlanStars(plan),
+        starsPriceUsd: getPlanStarsPriceUsd(plan),
       })),
       paymentsWallet: PAYMENTS_WALLET_NAME,
       // Drives the dashboard's Buy buttons. Follows the TON rail now, since
       // that is what this page actually sells through.
       paymentsLive: TON_PAYMENTS_CHECK_ENABLED,
+      starsPaymentsLive: Boolean(BOT_TOKEN),
       cycle: {
         tapCap: BEE_CYCLE_TAP_CAP,
         hours: BEE_CYCLE_HOURS,
@@ -2231,6 +2236,87 @@ app.use(express.static(path.join(process.cwd(), "public")));
       expiresAt: invoice.expiresAt,
     });
   });
+
+  // Telegram Stars checkout for the dashboard. Telegram hosts the payment
+  // sheet; the existing pre_checkout_query + successful_payment handlers in
+  // bot.ts remain the single place that validates and credits the purchase.
+  app.post(
+    "/api/dashboard/plan/stars",
+    requireDashboardAuth,
+    async (req: any, res) => {
+      const chatId = req.telegramId;
+      const planId = String(req.body?.planId || "").toLowerCase();
+      const plan = getPlanById(planId);
+
+      if (!plan) {
+        res.status(400).json({ ok: false, error: "INVALID_PLAN" });
+        return;
+      }
+
+      if (!BOT_TOKEN) {
+        res.status(503).json({ ok: false, error: "STARS_NOT_LIVE" });
+        return;
+      }
+
+      const stars = getPlanStars(plan);
+
+      try {
+        const telegramResponse = await fetch(
+          `https://api.telegram.org/bot${BOT_TOKEN}/createInvoiceLink`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: `${plan.label} — ${plan.days} gün`,
+              description: `Acki Nacki cloud mining for ${plan.days} days. Activates as soon as the payment clears.`,
+              payload: `plan:${plan.id}:${chatId}`,
+              currency: "XTR",
+              prices: [
+                {
+                  label: `${plan.label} ${plan.days} gün`,
+                  amount: stars,
+                },
+              ],
+            }),
+          },
+        );
+        const telegramData = (await telegramResponse.json()) as {
+          ok?: boolean;
+          result?: string;
+          description?: string;
+        };
+
+        if (!telegramResponse.ok || !telegramData.ok || !telegramData.result) {
+          console.error("Dashboard Stars invoice link failed:", {
+            chatId,
+            plan: plan.id,
+            status: telegramResponse.status,
+            description: telegramData.description || "UNKNOWN_TELEGRAM_ERROR",
+          });
+          res.status(502).json({ ok: false, error: "STARS_INVOICE_FAILED" });
+          return;
+        }
+
+        console.log("Dashboard Stars invoice link created:", {
+          chatId,
+          plan: plan.id,
+          stars,
+        });
+        res.json({
+          ok: true,
+          invoiceUrl: telegramData.result,
+          stars,
+        });
+      } catch (error) {
+        console.error("Dashboard Stars invoice link request failed:", {
+          chatId,
+          plan: plan.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        res.status(502).json({ ok: false, error: "STARS_INVOICE_FAILED" });
+      }
+    },
+  );
 
   app.get("/", (_req, res) => {
   res.sendFile(path.join(process.cwd(), "public", "index.html"));
