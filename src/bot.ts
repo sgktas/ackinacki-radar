@@ -14,6 +14,7 @@ import {
   buildInvoiceAmountRaw,
   getPlanById,
   getPlanStars,
+  getPlanStarsPriceUsd,
   PLANS,
   SHELL_DECIMALS,
   TEST_PLAN,
@@ -6663,7 +6664,7 @@ export async function startBot(botToken: string) {
           "",
           ...PLANS.map(
             (p) =>
-              `/pay ${p.id} — ${p.days} days — ${getPlanStars(p)} ⭐ (${p.priceUsd} USDT)`,
+              `/pay ${p.id} — ${p.days} days — ${getPlanStars(p)} ⭐ (${getPlanStarsPriceUsd(p)} USDT)`,
           ),
           "",
           `Want to try first? /trial (${TRIAL_DAYS} days, free)`,
@@ -7570,7 +7571,7 @@ export async function startBot(botToken: string) {
         "",
         ...PLANS.map(
           (plan) =>
-            `${plan.label} — ${plan.days} gün — ${getPlanStars(plan)} ⭐ (${plan.priceUsd} USDT)`,
+            `${plan.label} — ${plan.days} gün — ${getPlanStars(plan)} ⭐ (${getPlanStarsPriceUsd(plan)} USDT)`,
         ),
         "",
         `🎁 ${TRIAL_DAYS} gün ücretsiz deneme: /trial`,
@@ -7969,7 +7970,7 @@ export async function startBot(botToken: string) {
         "",
         ...PLANS.map(
           (plan) =>
-            `${plan.label} — ${plan.days} days — ${getPlanStars(plan)} ⭐ (${plan.priceUsd} USDT)`,
+            `${plan.label} — ${plan.days} days — ${getPlanStars(plan)} ⭐ (${getPlanStarsPriceUsd(plan)} USDT)`,
         ),
         "",
         "To buy:",

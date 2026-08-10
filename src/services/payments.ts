@@ -18,8 +18,10 @@ export type Plan = {
   days: number;
   priceUsd: number;
   priceShellRaw: string;
-  // Fixes the Stars price instead of deriving it from priceUsd. Only the test
-  // plan uses it — a real plan's star price must follow its USD price.
+  // Stars can have a different promotional USD price from the on-chain rail.
+  // `priceUsd` remains the TON/USDT price used by dashboard invoices.
+  starsPriceUsd?: number;
+  // Fixes the exact Stars amount when rounding or a tiny test invoice needs it.
   starsOverride?: number;
 };
 
@@ -51,6 +53,7 @@ export const PLANS: Plan[] = [
     days: 14,
     priceUsd: 5,
     priceShellRaw: shellAmountToRaw(500),
+    starsPriceUsd: 5,
   },
   {
     id: "max",
@@ -58,6 +61,7 @@ export const PLANS: Plan[] = [
     days: 30,
     priceUsd: 10,
     priceShellRaw: shellAmountToRaw(1000),
+    starsPriceUsd: 7.5,
   },
   {
     id: "super",
@@ -65,11 +69,16 @@ export const PLANS: Plan[] = [
     days: 90,
     priceUsd: 25,
     priceShellRaw: shellAmountToRaw(2500),
+    starsPriceUsd: 20,
   },
 ];
 
 export function getPlanStars(plan: Plan): number {
-  return plan.starsOverride ?? starsForUsd(plan.priceUsd);
+  return plan.starsOverride ?? starsForUsd(getPlanStarsPriceUsd(plan));
+}
+
+export function getPlanStarsPriceUsd(plan: Plan): number {
+  return plan.starsPriceUsd ?? plan.priceUsd;
 }
 
 // A 1-star, 1-day plan for exercising the payment path end to end without
