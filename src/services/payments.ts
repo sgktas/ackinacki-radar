@@ -1,7 +1,6 @@
 // Payments: SHELL-denominated subscription plans for the cloud mining
-// feature. Pricing uses SHELL (Acki Nacki's fixed-price native/gas token)
-// rather than NACKL (the volatile mining-reward token), since a stable unit
-// is what makes a subscription price make sense over time.
+// Cloud-mining plan prices. TON/USDT and Stars keep their own price sources;
+// NACKL uses a separately configured fixed amount for native-network buyers.
 //
 // Conversion reference used for these prices: 100 SHELL ~= 1 USDC (seen on
 // a comparable service's top-up screen). If that peg is ever confirmed to
@@ -9,6 +8,7 @@
 // from a live price feed.
 
 export const SHELL_DECIMALS = 9;
+export const NACKL_DECIMALS = 9;
 
 export type PlanId = "standard" | "max" | "super";
 
@@ -18,6 +18,7 @@ export type Plan = {
   days: number;
   priceUsd: number;
   priceShellRaw: string;
+  priceNacklRaw: string;
   // Stars can have a different promotional USD price from the on-chain rail.
   // `priceUsd` remains the TON/USDT price used by dashboard invoices.
   starsPriceUsd?: number;
@@ -31,6 +32,23 @@ function shellAmountToRaw(shellAmount: number): string {
   // units before scaling to the full raw (9-decimal) representation.
   const milliShell = BigInt(Math.round(shellAmount * 1000));
   return ((milliShell * scale) / 1000n).toString();
+}
+
+export function nacklAmountToRaw(nacklAmount: number): string {
+  const scale = 10n ** BigInt(NACKL_DECIMALS);
+  const milliNackl = BigInt(Math.round(nacklAmount * 1000));
+  return ((milliNackl * scale) / 1000n).toString();
+}
+
+export function formatNacklAmount(raw: string): string {
+  const value = BigInt(raw || "0");
+  const scale = 10n ** BigInt(NACKL_DECIMALS);
+  const whole = value / scale;
+  const fraction = (value % scale)
+    .toString()
+    .padStart(NACKL_DECIMALS, "0")
+    .replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
 // Telegram Stars price. Anchored to 66 ⭐ per USD, the rate a comparable Acki
@@ -53,6 +71,7 @@ export const PLANS: Plan[] = [
     days: 14,
     priceUsd: 5,
     priceShellRaw: shellAmountToRaw(500),
+    priceNacklRaw: nacklAmountToRaw(1500),
     starsPriceUsd: 5,
   },
   {
@@ -61,6 +80,7 @@ export const PLANS: Plan[] = [
     days: 30,
     priceUsd: 10,
     priceShellRaw: shellAmountToRaw(1000),
+    priceNacklRaw: nacklAmountToRaw(2500),
     starsPriceUsd: 7.5,
   },
   {
@@ -69,6 +89,7 @@ export const PLANS: Plan[] = [
     days: 90,
     priceUsd: 25,
     priceShellRaw: shellAmountToRaw(2500),
+    priceNacklRaw: nacklAmountToRaw(6000),
     starsPriceUsd: 20,
   },
 ];
@@ -91,6 +112,7 @@ export const TEST_PLAN: Plan = {
   days: 1,
   priceUsd: 0.02,
   priceShellRaw: shellAmountToRaw(2),
+  priceNacklRaw: nacklAmountToRaw(1),
   starsOverride: 1,
 };
 
@@ -108,11 +130,20 @@ export function getPlanById(planId: string): Plan | undefined {
 // to the plan's base price. Two people buying the "Max" plan at the same
 // time will have distinguishable exact amounts to watch for.
 export function buildInvoiceAmountRaw(planPriceRaw: string, offsetIndex: number): string {
-  // Offset range: 0.001 - 0.999 SHELL, keyed off offsetIndex so repeated
+  // Offset range: 0.001 - 0.999 token, keyed off offsetIndex so repeated
   // calls for the same invoice are stable, and different invoices are
   // very unlikely to collide.
   const offsetMilliShell = BigInt(1 + (offsetIndex % 999));
   const scale = 10n ** BigInt(SHELL_DECIMALS - 3); // milli-shell -> raw
   const offsetRaw = offsetMilliShell * scale;
   return (BigInt(planPriceRaw) + offsetRaw).toString();
+}
+
+export function buildNacklInvoiceAmountRaw(
+  planPriceRaw: string,
+  offsetIndex: number,
+): string {
+  const offsetMilliNackl = BigInt(1 + (offsetIndex % 999));
+  const scale = 10n ** BigInt(NACKL_DECIMALS - 3);
+  return (BigInt(planPriceRaw) + offsetMilliNackl * scale).toString();
 }

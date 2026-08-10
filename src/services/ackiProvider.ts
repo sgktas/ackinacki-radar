@@ -1243,6 +1243,20 @@ export type IncomingShellTransfer = {
   createdAt: number;
 };
 
+export type IncomingNacklTransfer = {
+  id: string;
+  src: string;
+  nacklValueRaw: string;
+  createdAt: number;
+};
+
+type IncomingTokenTransfer = {
+  id: string;
+  src: string;
+  valueRaw: string;
+  createdAt: number;
+};
+
 // Payment monitoring, sender-based (preferred): reads recent INCOMING
 // internal transfers (msg_type: IntIn) to the payments wallet and extracts
 // the SHELL (ECC index 2) portion of each one via `value_other`, plus the
@@ -1264,14 +1278,15 @@ export type IncomingShellTransfer = {
 // so it failed schema validation on every single call and the caller silently
 // fell back to balance-diff 100% of the time. The caller's fallback is kept
 // as a safety net, but this path should now be the one that runs.
-export async function getIncomingShellTransfers(
+async function getIncomingTokenTransfers(
   walletNameOrAddress: string,
-  limit = 20,
-): Promise<IncomingShellTransfer[]> {
+  currency: number,
+  limit: number,
+): Promise<IncomingTokenTransfer[]> {
   const resolved = await resolveAckiWalletInput(walletNameOrAddress);
 
   const query = `
-    query GetIncomingShellTransfers($accountId: String!, $dappId: String!, $limit: Int!) {
+    query GetIncomingTokenTransfers($accountId: String!, $dappId: String!, $limit: Int!) {
       blockchain {
         account(account_id: $accountId, dapp_id: $dappId) {
           messages(msg_type: [IntIn], last: $limit) {
@@ -1304,28 +1319,54 @@ export async function getIncomingShellTransfers(
     return [];
   }
 
-  const transfers: IncomingShellTransfer[] = [];
+  const transfers: IncomingTokenTransfer[] = [];
 
   for (const edge of edges) {
     const node = edge?.node;
     if (!node) continue;
 
     const otherCurrencies = Array.isArray(node.value_other) ? node.value_other : [];
-    const shellEntry = otherCurrencies.find(
-      (entry: any) => normalizeCurrencyId(entry?.currency) === 2,
+    const tokenEntry = otherCurrencies.find(
+      (entry: any) => normalizeCurrencyId(entry?.currency) === currency,
     );
 
-    if (!shellEntry) continue;
+    if (!tokenEntry) continue;
 
     transfers.push({
       id: String(node.id),
       src: String(node.src || ""),
-      shellValueRaw: String(shellEntry.value || "0"),
+      valueRaw: String(tokenEntry.value || "0"),
       createdAt: Number(node.created_at) || 0,
     });
   }
 
   return transfers;
+}
+
+export async function getIncomingShellTransfers(
+  walletNameOrAddress: string,
+  limit = 20,
+): Promise<IncomingShellTransfer[]> {
+  const transfers = await getIncomingTokenTransfers(walletNameOrAddress, 2, limit);
+  return transfers.map((transfer) => ({
+    id: transfer.id,
+    src: transfer.src,
+    shellValueRaw: transfer.valueRaw,
+    createdAt: transfer.createdAt,
+  }));
+}
+
+export async function getIncomingNacklTransfers(
+  walletNameOrAddress: string,
+  limit = 100,
+): Promise<IncomingNacklTransfer[]> {
+  const transfers = await getIncomingTokenTransfers(walletNameOrAddress, 1, limit);
+  return transfers.map((transfer) => ({
+    id: transfer.id,
+    src: transfer.src,
+    nacklValueRaw: transfer.valueRaw,
+    createdAt: transfer.createdAt,
+  }));
 }
 
 export async function getAckiWalletActivity(input: string): Promise<AckiWalletActivity> {

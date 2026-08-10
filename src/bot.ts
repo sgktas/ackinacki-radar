@@ -7,11 +7,14 @@ import {
   getAckiPopitDebug,
   getAckiPopitGameActivity,
   getAckiWalletActivity,
+  getIncomingNacklTransfers,
   getIncomingShellTransfers,
   getShellBalance,
 } from "./services/ackiProvider";
 import {
   buildInvoiceAmountRaw,
+  buildNacklInvoiceAmountRaw,
+  formatNacklAmount,
   getPlanById,
   getPlanStars,
   getPlanStarsPriceUsd,
@@ -461,7 +464,7 @@ type PendingInvoice = {
   // TON-rail invoices carry a code the payer puts in the transfer comment.
   // Absent on legacy SHELL invoices, which are matched by exact amount.
   code?: string;
-  currency?: "shell" | "usdt";
+  currency?: "shell" | "usdt" | "nackl";
   // One invoice, either currency: `amountRaw` is the USDT price and
   // `amountTonRaw` the TON equivalent locked at creation time. TON is absent
   // when the rate lookup failed, in which case only USDT is accepted.
@@ -482,6 +485,11 @@ type PaymentsState = {
   pendingInvoices: PendingInvoice[];
   subscriptions: Record<string, Subscription>;
   seenMessageIds: string[];
+  // NACKL transfer ids are independent of the legacy SHELL cursor. The
+  // baseline flag prevents transfers predating deployment from being sold as
+  // new subscriptions on the first successful chain read.
+  seenNacklMessageIds?: string[];
+  nacklBaselineReady?: boolean;
   // chatIds that have ever taken the free trial. Kept separately from
   // `subscriptions` because that record gets overwritten by a later purchase,
   // which would otherwise hand the same person a second trial.
@@ -521,6 +529,10 @@ function readPaymentsState(): PaymentsState {
       ? parsed.subscriptions
       : {},
     seenMessageIds: Array.isArray(parsed?.seenMessageIds) ? parsed.seenMessageIds : [],
+    seenNacklMessageIds: Array.isArray(parsed?.seenNacklMessageIds)
+      ? parsed.seenNacklMessageIds
+      : [],
+    nacklBaselineReady: parsed?.nacklBaselineReady === true,
     tonLastLt: Number.isFinite(Number(parsed?.tonLastLt))
       ? Number(parsed.tonLastLt)
       : 0,
@@ -587,10 +599,16 @@ const PAYMENTS_INVOICE_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes to pay
 // (it is dropped on expiry, so it cannot be redeemed later).
 const TON_INVOICE_EXPIRY_MS =
   Number(process.env.TON_INVOICE_EXPIRY_MINUTES || 120) * 60 * 1000;
+const NACKL_PAYMENTS_WALLET_NAME =
+  process.env.NACKL_PAYMENTS_WALLET_NAME || PAYMENTS_WALLET_NAME;
+const NACKL_INVOICE_EXPIRY_MS =
+  Number(process.env.NACKL_INVOICE_EXPIRY_MINUTES || 120) * 60 * 1000;
 
 function allocateInvoiceAmountRaw(plan: Plan, state: PaymentsState): string {
   const usedAmounts = new Set(
-    state.pendingInvoices.map((invoice) => String(invoice.amountRaw)),
+    state.pendingInvoices
+      .filter((invoice) => !invoice.currency || invoice.currency === "shell")
+      .map((invoice) => String(invoice.amountRaw)),
   );
   const initialOffset = Date.now() % 999;
 
@@ -606,6 +624,26 @@ function allocateInvoiceAmountRaw(plan: Plan, state: PaymentsState): string {
   }
 
   throw new Error("INVOICE_AMOUNT_CAPACITY_REACHED");
+}
+
+function allocateNacklInvoiceAmountRaw(plan: Plan, state: PaymentsState): string {
+  const usedAmounts = new Set(
+    state.pendingInvoices
+      .filter((invoice) => invoice.currency === "nackl")
+      .map((invoice) => String(invoice.amountRaw)),
+  );
+  const initialOffset = Date.now() % 999;
+
+  for (let attempt = 0; attempt < 999; attempt += 1) {
+    const amountRaw = buildNacklInvoiceAmountRaw(
+      plan.priceNacklRaw,
+      initialOffset + attempt,
+    );
+
+    if (!usedAmounts.has(amountRaw)) return amountRaw;
+  }
+
+  throw new Error("NACKL_INVOICE_AMOUNT_CAPACITY_REACHED");
 }
 
 function formatShellAmount(raw: string): string {
@@ -5678,6 +5716,173 @@ function startTonPaymentsScheduler(bot: Telegraf<any>) {
   scheduleNext(TON_PAYMENTS_CHECK_INTERVAL_MS);
 }
 
+// NACKL is currency id 1 on Acki Nacki. It has its own transfer cursor and
+// scheduler so an unavailable legacy SHELL balance query cannot delay native
+// token payments.
+const NACKL_PAYMENTS_CHECK_ENABLED =
+  String(process.env.NACKL_PAYMENTS_CHECK_ENABLED || "false").toLowerCase() ===
+    "true" && Boolean(NACKL_PAYMENTS_WALLET_NAME);
+const NACKL_PAYMENTS_CHECK_INTERVAL_MS =
+  Number(process.env.NACKL_PAYMENTS_CHECK_INTERVAL_SECONDS || 45) * 1000;
+
+let nacklPaymentsTimer: ReturnType<typeof setTimeout> | undefined;
+let nacklPaymentsRunning = false;
+
+async function runNacklPaymentsCheckTick(bot: Telegraf<any>) {
+  if (nacklPaymentsRunning) return;
+  nacklPaymentsRunning = true;
+
+  try {
+    let transfers;
+
+    try {
+      transfers = await getIncomingNacklTransfers(
+        NACKL_PAYMENTS_WALLET_NAME,
+        100,
+      );
+    } catch (error) {
+      console.error("NACKL payments check: fetch failed:", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    // Read only after the network call. This narrows the window in which the
+    // TON/Stars handlers could update the shared file before this tick writes.
+    const state = readPaymentsState();
+    const seen = new Set(state.seenNacklMessageIds || []);
+
+    if (!state.nacklBaselineReady) {
+      for (const transfer of transfers) seen.add(transfer.id);
+      state.seenNacklMessageIds = Array.from(seen).slice(-1000);
+      state.nacklBaselineReady = true;
+      writePaymentsState(state);
+      console.log("NACKL payments: baseline established:", {
+        skipped: transfers.length,
+      });
+      return;
+    }
+
+    const now = Date.now();
+    let credited = 0;
+    const notifications: Array<{
+      chatId: number;
+      plan: Plan;
+      amountRaw: string;
+      activeUntil: string;
+    }> = [];
+
+    for (const transfer of transfers) {
+      if (seen.has(transfer.id)) continue;
+      seen.add(transfer.id);
+      if (BigInt(transfer.nacklValueRaw) <= 0n) continue;
+
+      const matches = state.pendingInvoices.filter(
+        (invoice) =>
+          invoice.currency === "nackl" &&
+          new Date(invoice.expiresAt).getTime() > now &&
+          invoice.amountRaw === transfer.nacklValueRaw,
+      );
+
+      if (matches.length !== 1) {
+        console.warn("NACKL payments: incoming transfer has no unique invoice match:", {
+          id: transfer.id,
+          amountNackl: formatNacklAmount(transfer.nacklValueRaw),
+          exactMatchCount: matches.length,
+        });
+        continue;
+      }
+
+      const invoice = matches[0]!;
+      const plan = resolvePaidPlan(invoice.planId);
+      if (!plan) continue;
+
+      const activeUntil = grantSubscription(
+        state,
+        invoice.chatId,
+        plan.id,
+        plan.days,
+      );
+      state.pendingInvoices = state.pendingInvoices.filter(
+        (item) => item.id !== invoice.id,
+      );
+      credited += 1;
+
+      console.log("NACKL payments: subscription activated:", {
+        chatId: invoice.chatId,
+        plan: plan.id,
+        amountNackl: formatNacklAmount(transfer.nacklValueRaw),
+        activeUntil,
+      });
+      notifications.push({
+        chatId: invoice.chatId,
+        plan,
+        amountRaw: transfer.nacklValueRaw,
+        activeUntil,
+      });
+    }
+
+    state.seenNacklMessageIds = Array.from(seen).slice(-1000);
+    state.pendingInvoices = state.pendingInvoices.filter(
+      (invoice) => new Date(invoice.expiresAt).getTime() > now,
+    );
+    writePaymentsState(state);
+
+    // Persist the credit and cursor before making any Telegram request. A
+    // slow notification must never leave a paid invoice replayable.
+    for (const notice of notifications) {
+      try {
+        await bot.telegram.sendMessage(
+          notice.chatId,
+          [
+            "✅ NACKL ödemen alındı, aboneliğin aktif.",
+            "",
+            `Plan: ${notice.plan.label} (${notice.plan.days} gün)`,
+            `Tutar: ${formatNacklAmount(notice.amountRaw)} NACKL`,
+            `Bitiş: ${new Date(notice.activeUntil).toLocaleString("tr-TR")}`,
+            "",
+            "Madenciliği başlatmak için: /miner_start",
+          ].join("\n"),
+        );
+      } catch (error) {
+        console.error("NACKL payments: activation notice failed:", {
+          chatId: notice.chatId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (credited) console.log("NACKL payments check finished:", { credited });
+  } finally {
+    nacklPaymentsRunning = false;
+  }
+}
+
+function startNacklPaymentsScheduler(bot: Telegraf<any>) {
+  if (!NACKL_PAYMENTS_CHECK_ENABLED) {
+    console.log(
+      "NACKL payments scheduler disabled (NACKL_PAYMENTS_CHECK_ENABLED / wallet)",
+    );
+    return;
+  }
+
+  if (nacklPaymentsTimer) clearTimeout(nacklPaymentsTimer);
+
+  const scheduleNext = (delayMs: number) => {
+    nacklPaymentsTimer = setTimeout(() => {
+      void runNacklPaymentsCheckTick(bot).finally(() =>
+        scheduleNext(NACKL_PAYMENTS_CHECK_INTERVAL_MS),
+      );
+    }, delayMs);
+  };
+
+  console.log("NACKL payments scheduler started:", {
+    intervalSeconds: Math.round(NACKL_PAYMENTS_CHECK_INTERVAL_MS / 1000),
+    wallet: NACKL_PAYMENTS_WALLET_NAME,
+  });
+  scheduleNext(2000);
+}
+
 let paymentsCheckTimer: ReturnType<typeof setTimeout> | undefined;
 let paymentsCheckRunning = false;
 
@@ -5758,7 +5963,9 @@ async function runPaymentsCheckTickSenderBased(
     const chatId = ownerMiner.chatId;
     const candidateInvoices = state.pendingInvoices.filter(
       (invoice) =>
-        invoice.chatId === chatId && new Date(invoice.expiresAt).getTime() > now,
+        invoice.chatId === chatId &&
+        (!invoice.currency || invoice.currency === "shell") &&
+        new Date(invoice.expiresAt).getTime() > now,
     );
 
     // Each invoice has a distinct fractional amount. Match exactly rather than
@@ -5852,8 +6059,12 @@ async function runPaymentsCheckTickBalanceDiff(
 
   const delta = BigInt(currentBalanceRaw) - BigInt(state.lastCheckedBalanceRaw);
 
-  if (delta > 0n && state.pendingInvoices.length) {
-    let matched = findInvoiceCombinationMatchingAmount(state.pendingInvoices, delta);
+  const shellInvoices = state.pendingInvoices.filter(
+    (invoice) => !invoice.currency || invoice.currency === "shell",
+  );
+
+  if (delta > 0n && shellInvoices.length) {
+    let matched = findInvoiceCombinationMatchingAmount(shellInvoices, delta);
 
     if (!matched) {
       // Fix: safe fallback for a slight typo (e.g. last digit off) — only
@@ -5861,7 +6072,7 @@ async function runPaymentsCheckTickBalanceDiff(
       // tolerance of the observed delta, so there's no ambiguity about
       // which invoice it belongs to.
       const TOLERANCE_RAW = 10n ** BigInt(SHELL_DECIMALS - 2); // 0.01 SHELL
-      const closeMatches = state.pendingInvoices.filter((invoice) => {
+      const closeMatches = shellInvoices.filter((invoice) => {
         const diff = BigInt(invoice.amountRaw) - delta;
         return (diff < 0n ? -diff : diff) <= TOLERANCE_RAW;
       });
@@ -7574,9 +7785,16 @@ export async function startBot(botToken: string) {
             `${plan.label} — ${plan.days} gün — ${getPlanStars(plan)} ⭐ (${getPlanStarsPriceUsd(plan)} USDT)`,
         ),
         "",
+        "NACKL ile ödeme:",
+        ...PLANS.map(
+          (plan) =>
+            `${plan.label} — ${plan.days} gün — ${formatNacklAmount(plan.priceNacklRaw)} NACKL`,
+        ),
+        "",
         `🎁 ${TRIAL_DAYS} gün ücretsiz deneme: /trial`,
         "",
         "Telegram'dan yıldız ile: /pay <standard|max|super>",
+        "NACKL ile: /plan_buy_nackl <standard|max|super>",
         "Kripto ile ödemek istersen panelden: https://ackinackiradar.com",
         "",
         "Bizde ayrıca:",
@@ -7763,6 +7981,86 @@ export async function startBot(botToken: string) {
     );
   });
 
+  bot.command("plan_buy_nackl", async (ctx) => {
+    if (!NACKL_PAYMENTS_CHECK_ENABLED) {
+      await ctx.reply("NACKL ödeme doğrulaması şu an aktif değil.");
+      return;
+    }
+
+    const chatId = ctx.chat?.id;
+    const planId = getCommandArgument(ctx.message?.text).trim().toLowerCase();
+
+    if (!chatId) {
+      await ctx.reply("Sohbet bilgisi alınamadı.");
+      return;
+    }
+
+    const plan =
+      planId === TEST_PLAN.id && isRealAdminContext(ctx)
+        ? TEST_PLAN
+        : getPlanById(planId);
+
+    if (!plan) {
+      await ctx.reply("Kullanım: /plan_buy_nackl <standard|max|super>");
+      return;
+    }
+
+    const state = readPaymentsState();
+
+    if (!state.nacklBaselineReady) {
+      await ctx.reply(
+        "NACKL ödeme izleyicisi hazırlanıyor; lütfen kısa süre sonra tekrar dene.",
+      );
+      return;
+    }
+
+    const now = Date.now();
+    let invoice = state.pendingInvoices.find(
+      (item) =>
+        item.chatId === chatId &&
+        item.planId === plan.id &&
+        item.currency === "nackl" &&
+        new Date(item.expiresAt).getTime() > now,
+    );
+
+    if (!invoice) {
+      invoice = {
+        id: `nackl:${chatId}:${plan.id}:${now}`,
+        chatId,
+        planId: plan.id,
+        amountRaw: allocateNacklInvoiceAmountRaw(plan, state),
+        createdAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + NACKL_INVOICE_EXPIRY_MS).toISOString(),
+        currency: "nackl",
+      };
+      state.pendingInvoices.push(invoice);
+      writePaymentsState(state);
+    }
+
+    const minutesLeft = Math.max(
+      1,
+      Math.round((new Date(invoice.expiresAt).getTime() - now) / 60000),
+    );
+
+    await ctx.reply(
+      [
+        `💳 <b>${escapeHtml(plan.label)}</b> — ${plan.days} gün`,
+        "",
+        "Gönderilecek tam tutar:",
+        `<code>${escapeHtml(formatNacklAmount(invoice.amountRaw))}</code> NACKL`,
+        "",
+        `Alıcı cüzdan: <code>${escapeHtml(NACKL_PAYMENTS_WALLET_NAME)}</code>`,
+        "Ağ: Acki Nacki",
+        "",
+        "⚠️ Tutarı küsuratıyla birlikte eksiksiz gönder. Bu küçük küsurat faturayı hesabınla eşleştirir.",
+        "Açıklama yazman gerekmez. Ağ ücreti için cüzdanında az miktarda SHELL bulunmalı.",
+        "",
+        `Fatura ${minutesLeft} dakika geçerli. Transfer algılanınca abonelik otomatik açılır.`,
+      ].join("\n"),
+      { parse_mode: "HTML" },
+    );
+  });
+
   bot.command("plan_status", async (ctx) => {
     const chatId = ctx.chat?.id;
 
@@ -7809,7 +8107,12 @@ export async function startBot(botToken: string) {
 
     const lines = state.pendingInvoices.map((invoice) => {
       const plan = resolvePaidPlan(invoice.planId);
-      return `${invoice.id} — chatId: ${invoice.chatId} — ${plan?.label || invoice.planId} — ${formatShellAmount(invoice.amountRaw)} SHELL — son geçerlilik: ${new Date(invoice.expiresAt).toLocaleString("tr-TR")}`;
+      const amount = invoice.currency === "nackl"
+        ? `${formatNacklAmount(invoice.amountRaw)} NACKL`
+        : invoice.currency === "usdt"
+          ? `${formatUsdtAmount(invoice.amountRaw)} USDT`
+          : `${formatShellAmount(invoice.amountRaw)} SHELL`;
+      return `${invoice.id} — chatId: ${invoice.chatId} — ${plan?.label || invoice.planId} — ${amount} — son geçerlilik: ${new Date(invoice.expiresAt).toLocaleString("tr-TR")}`;
     });
 
     await ctx.reply(["⏳ Bekleyen Faturalar", "", ...lines].join("\n"));
@@ -7975,6 +8278,12 @@ export async function startBot(botToken: string) {
         "",
         "To buy:",
         ...PLANS.map((plan) => `/pay ${plan.id}`),
+        "",
+        "Pay with NACKL:",
+        ...PLANS.map(
+          (plan) =>
+            `${formatNacklAmount(plan.priceNacklRaw)} NACKL — /plan_buy_nackl ${plan.id}`,
+        ),
         "",
         `🎁 ${TRIAL_DAYS}-day free trial: /trial`,
         "",
@@ -8216,6 +8525,7 @@ export async function startBot(botToken: string) {
   startBeeMiningScheduler();
   startPaymentsCheckScheduler(bot);
   startTonPaymentsScheduler(bot);
+  startNacklPaymentsScheduler(bot);
 
   const me = await bot.telegram.getMe();
   console.log(`Telegram bot çalışıyor: @${me.username}`);
@@ -8225,6 +8535,8 @@ export async function startBot(botToken: string) {
     if (miningSummaryTimer) clearTimeout(miningSummaryTimer);
     if (beeMiningTimer) clearTimeout(beeMiningTimer);
     if (paymentsCheckTimer) clearTimeout(paymentsCheckTimer);
+    if (tonPaymentsTimer) clearTimeout(tonPaymentsTimer);
+    if (nacklPaymentsTimer) clearTimeout(nacklPaymentsTimer);
     bot.stop("SIGINT");
   });
   process.once("SIGTERM", () => {
@@ -8232,6 +8544,8 @@ export async function startBot(botToken: string) {
     if (miningSummaryTimer) clearTimeout(miningSummaryTimer);
     if (beeMiningTimer) clearTimeout(beeMiningTimer);
     if (paymentsCheckTimer) clearTimeout(paymentsCheckTimer);
+    if (tonPaymentsTimer) clearTimeout(tonPaymentsTimer);
+    if (nacklPaymentsTimer) clearTimeout(nacklPaymentsTimer);
     bot.stop("SIGTERM");
   });
 

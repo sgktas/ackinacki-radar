@@ -17,6 +17,8 @@ import {
 } from "./services/beeMiner";
 import {
   buildInvoiceAmountRaw,
+  buildNacklInvoiceAmountRaw,
+  formatNacklAmount,
   getPlanById,
   getPlanStars,
   getPlanStarsPriceUsd,
@@ -1156,6 +1158,9 @@ type PendingInvoice = {
   amountRaw: string;
   createdAt: string;
   expiresAt: string;
+  currency?: "shell" | "usdt" | "nackl";
+  code?: string;
+  amountTonRaw?: string;
 };
 
 type Subscription = { planId: string; activeUntil: string };
@@ -1165,6 +1170,11 @@ type PaymentsState = {
   pendingInvoices: PendingInvoice[];
   subscriptions: Record<string, Subscription>;
   seenMessageIds: string[];
+  seenNacklMessageIds?: string[];
+  nacklBaselineReady?: boolean;
+  trialUsed?: number[];
+  starsCharges?: string[];
+  tonLastLt?: number;
 };
 
 function readBeeMinerState(): BeeMinerState {
@@ -1196,6 +1206,15 @@ function readPaymentsState(): PaymentsState {
     pendingInvoices: Array.isArray(parsed?.pendingInvoices) ? parsed.pendingInvoices : [],
     subscriptions: parsed?.subscriptions && typeof parsed.subscriptions === "object" ? parsed.subscriptions : {},
     seenMessageIds: Array.isArray(parsed?.seenMessageIds) ? parsed.seenMessageIds : [],
+    seenNacklMessageIds: Array.isArray(parsed?.seenNacklMessageIds)
+      ? parsed.seenNacklMessageIds
+      : [],
+    nacklBaselineReady: parsed?.nacklBaselineReady === true,
+    trialUsed: Array.isArray(parsed?.trialUsed) ? parsed.trialUsed : [],
+    starsCharges: Array.isArray(parsed?.starsCharges) ? parsed.starsCharges : [],
+    tonLastLt: Number.isFinite(Number(parsed?.tonLastLt))
+      ? Number(parsed.tonLastLt)
+      : 0,
   };
 }
 
@@ -1224,10 +1243,36 @@ function allocateInvoiceAmountRaw(plan: Plan, state: PaymentsState): string {
   throw new Error("INVOICE_AMOUNT_CAPACITY_REACHED");
 }
 
+function allocateNacklInvoiceAmountRaw(plan: Plan, state: PaymentsState): string {
+  const usedAmounts = new Set(
+    state.pendingInvoices
+      .filter((invoice) => invoice.currency === "nackl")
+      .map((invoice) => String(invoice.amountRaw)),
+  );
+  const initialOffset = Date.now() % 999;
+
+  for (let attempt = 0; attempt < 999; attempt += 1) {
+    const amountRaw = buildNacklInvoiceAmountRaw(
+      plan.priceNacklRaw,
+      initialOffset + attempt,
+    );
+    if (!usedAmounts.has(amountRaw)) return amountRaw;
+  }
+
+  throw new Error("NACKL_INVOICE_AMOUNT_CAPACITY_REACHED");
+}
+
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const SESSION_SECRET = process.env.DASHBOARD_SESSION_SECRET || BOT_TOKEN || "insecure-dev-secret";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const PAYMENTS_WALLET_NAME = process.env.PAYMENTS_WALLET_NAME || "ackinackiradarpayments";
+const NACKL_PAYMENTS_WALLET_NAME =
+  process.env.NACKL_PAYMENTS_WALLET_NAME || PAYMENTS_WALLET_NAME;
+const NACKL_PAYMENTS_CHECK_ENABLED =
+  String(process.env.NACKL_PAYMENTS_CHECK_ENABLED || "false").toLowerCase() ===
+    "true" && Boolean(NACKL_PAYMENTS_WALLET_NAME);
+const NACKL_INVOICE_EXPIRY_MS =
+  Number(process.env.NACKL_INVOICE_EXPIRY_MINUTES || 120) * 60 * 1000;
 const BEE_APP_ID = process.env.BEE_APP_ID || "";
 // Same flag bot.ts uses to gate its payment-matching cron. /plan/buy must not
 // issue a real invoice while that cron is off — no automated process would
@@ -1854,6 +1899,7 @@ app.use(express.static(path.join(process.cwd(), "public")));
         days: plan.days,
         priceUsd: plan.priceUsd,
         priceShellRaw: plan.priceShellRaw,
+        priceNackl: formatNacklAmount(plan.priceNacklRaw),
         stars: getPlanStars(plan),
         starsPriceUsd: getPlanStarsPriceUsd(plan),
       })),
@@ -1862,6 +1908,9 @@ app.use(express.static(path.join(process.cwd(), "public")));
       // that is what this page actually sells through.
       paymentsLive: TON_PAYMENTS_CHECK_ENABLED,
       starsPaymentsLive: Boolean(BOT_TOKEN),
+      nacklPaymentsLive:
+        NACKL_PAYMENTS_CHECK_ENABLED && paymentsState.nacklBaselineReady === true,
+      nacklPaymentsWallet: NACKL_PAYMENTS_WALLET_NAME,
       cycle: {
         tapCap: BEE_CYCLE_TAP_CAP,
         hours: BEE_CYCLE_HOURS,
@@ -2236,6 +2285,79 @@ app.use(express.static(path.join(process.cwd(), "public")));
       expiresAt: invoice.expiresAt,
     });
   });
+
+  // Native NACKL payments are matched by their exact amount. Each invoice
+  // receives a sub-NACKL fractional marker, so neither a sender-wallet lookup
+  // nor a memo field is required.
+  app.post(
+    "/api/dashboard/plan/nackl",
+    requireDashboardAuth,
+    (req: any, res) => {
+      if (!NACKL_PAYMENTS_CHECK_ENABLED) {
+        res.status(503).json({ ok: false, error: "NACKL_PAYMENTS_NOT_LIVE" });
+        return;
+      }
+
+      const chatId = req.telegramId;
+      const planId = String(req.body?.planId || "").toLowerCase();
+      const plan = getPlanById(planId);
+
+      if (!plan) {
+        res.status(400).json({ ok: false, error: "INVALID_PLAN" });
+        return;
+      }
+
+      const state = readPaymentsState();
+
+      if (!state.nacklBaselineReady) {
+        res.status(503).json({ ok: false, error: "NACKL_PAYMENTS_NOT_READY" });
+        return;
+      }
+
+      const now = Date.now();
+      let invoice = state.pendingInvoices.find(
+        (item) =>
+          item.chatId === chatId &&
+          item.planId === plan.id &&
+          item.currency === "nackl" &&
+          new Date(item.expiresAt).getTime() > now,
+      );
+
+      if (!invoice) {
+        try {
+          invoice = {
+            id: `nackl:${chatId}:${plan.id}:${now}`,
+            chatId,
+            planId: plan.id,
+            amountRaw: allocateNacklInvoiceAmountRaw(plan, state),
+            createdAt: new Date(now).toISOString(),
+            expiresAt: new Date(now + NACKL_INVOICE_EXPIRY_MS).toISOString(),
+            currency: "nackl",
+          };
+        } catch (error) {
+          res.status(503).json({
+            ok: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : "NACKL_INVOICE_AMOUNT_CAPACITY_REACHED",
+          });
+          return;
+        }
+        state.pendingInvoices.push(invoice);
+        writePaymentsState(state);
+      }
+
+      res.json({
+        ok: true,
+        currency: "nackl",
+        network: "Acki Nacki",
+        wallet: NACKL_PAYMENTS_WALLET_NAME,
+        amountNackl: formatNacklAmount(invoice.amountRaw),
+        expiresAt: invoice.expiresAt,
+      });
+    },
+  );
 
   // Telegram Stars checkout for the dashboard. Telegram hosts the payment
   // sheet; the existing pre_checkout_query + successful_payment handlers in
