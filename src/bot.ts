@@ -495,7 +495,7 @@ type PaymentsState = {
 
 // Local alias so this file doesn't need a type-only import cycle concern —
 // mirrors PlanId from services/payments.ts.
-type PlanId2 = "standard" | "max" | "super";
+type PlanId2 = "standard" | "max" | "super" | "test";
 
 function readPaymentsState(): PaymentsState {
   ensureStorage();
@@ -5522,7 +5522,9 @@ async function runTonPaymentsCheckTick(bot: Telegraf<any>) {
         continue;
       }
 
-      const plan = getPlanById(invoice.planId);
+      // Admin test invoices deliberately live outside the public PLANS list.
+      // They still need to resolve here after an on-chain transfer arrives.
+      const plan = resolvePaidPlan(invoice.planId);
 
       if (!plan) continue;
 
@@ -5873,7 +5875,7 @@ async function runPaymentsCheckTickBalanceDiff(
 
     if (matched) {
       for (const invoice of matched) {
-        const plan = getPlanById(invoice.planId);
+        const plan = resolvePaidPlan(invoice.planId);
 
         if (!plan) continue;
 
@@ -7599,7 +7601,13 @@ export async function startBot(botToken: string) {
       return;
     }
 
-    const plan = getPlanById(planId);
+    // Keep the low-value test invoice completely hidden from normal users.
+    // It exercises the same production TON/USDT settlement path as a real
+    // package, but can only be issued from the configured admin account.
+    const plan =
+      planId === TEST_PLAN.id && isRealAdminContext(ctx)
+        ? TEST_PLAN
+        : getPlanById(planId);
 
     if (!plan) {
       await ctx.reply("Kullanım: /plan_buy <standard|max|super>");
@@ -7799,7 +7807,7 @@ export async function startBot(botToken: string) {
     }
 
     const lines = state.pendingInvoices.map((invoice) => {
-      const plan = getPlanById(invoice.planId);
+      const plan = resolvePaidPlan(invoice.planId);
       return `${invoice.id} — chatId: ${invoice.chatId} — ${plan?.label || invoice.planId} — ${formatShellAmount(invoice.amountRaw)} SHELL — son geçerlilik: ${new Date(invoice.expiresAt).toLocaleString("tr-TR")}`;
     });
 
