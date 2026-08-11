@@ -10,8 +10,26 @@ import init, {
 
 const require = createRequire(import.meta.url);
 
-const ACKI_MAINNET_GRAPHQL_URL =
-  process.env.ACKI_MAINNET_GRAPHQL_URL || "https://mainnet.ackinacki.org/graphql";
+// Bee SDK endpoints are network roots. The SDK appends its own GraphQL path;
+// passing our direct HTTP GraphQL URL here made its internal event client use
+// `/graphql` as a server root and produced persistent pool timeouts. This
+// matches the official miner-react example exactly.
+const ACKI_BEE_ENDPOINTS = (
+  process.env.ACKI_BEE_ENDPOINTS || "https://mainnet.ackinacki.org"
+)
+  .split(",")
+  .map((endpoint) => endpoint.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+const BEE_CHAIN_CRITICAL_FILE = path.join(
+  process.cwd(),
+  "data",
+  "bee-chain-critical.json",
+);
+const BEE_CHAIN_CRITICAL_LEASE_MS = Math.max(
+  60_000,
+  Number(process.env.BEE_CHAIN_CRITICAL_LEASE_SECONDS || 600) * 1000,
+);
+const BEE_CHAIN_CRITICAL_OWNER = `${process.pid}:${Date.now()}`;
 
 // Fix: @teamgosh/bee-sdk is built with `wasm-pack build --target web`, so its
 // default loader uses `fetch()` against a same-origin URL — that only works
@@ -108,7 +126,7 @@ export async function resolveMinerAddress(params: {
     app_id: params.appId,
     wallet_name: params.walletName,
     client_config: {
-      network: { endpoints: [ACKI_MAINNET_GRAPHQL_URL] },
+      network: { endpoints: ACKI_BEE_ENDPOINTS },
     },
   } as any);
 
@@ -131,7 +149,7 @@ export async function waitForMiningKeyPropagation(params: {
 
   await ensure_mining_keys_propagated({
     client_config: {
-      network: { endpoints: [ACKI_MAINNET_GRAPHQL_URL] },
+      network: { endpoints: ACKI_BEE_ENDPOINTS },
     },
     miner_address: params.minerAddress,
     app_id: params.appId,
@@ -175,7 +193,7 @@ export async function createMiner(params: {
   await ensureBeeSdkInitialized();
 
   const miner = await Miner.new(
-    [ACKI_MAINNET_GRAPHQL_URL],
+    ACKI_BEE_ENDPOINTS,
     params.appId,
     params.minerAddress,
     params.publicKey,
@@ -197,21 +215,73 @@ export async function createMiner(params: {
 // in-flight submissions off, which is what ~28% of sessions look like: taps
 // sent, no error reported, nothing on chain.
 const minerPool = new Map<string, BeeMinerHandle>();
-// Low-priority dashboard and wallet readers share this process with Bee. This
-// process-wide marker lets them stand down during a session/claim without
-// disabling either product for the rest of the epoch.
+// Bee runs in its own PM2 process. Low-priority dashboard, payment and wallet
+// readers therefore need a process-shared lease, not only an in-memory flag,
+// to stand down while the SDK is submitting a session or reward claim.
 let chainCriticalCount = 0;
+
+function writeBeeChainCriticalLease(): void {
+  const dir = path.dirname(BEE_CHAIN_CRITICAL_FILE);
+  fs.mkdirSync(dir, { recursive: true });
+  const temp = `${BEE_CHAIN_CRITICAL_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(
+    temp,
+    JSON.stringify({
+      owner: BEE_CHAIN_CRITICAL_OWNER,
+      pid: process.pid,
+      enteredAt: new Date().toISOString(),
+      expiresAt: Date.now() + BEE_CHAIN_CRITICAL_LEASE_MS,
+    }),
+    "utf-8",
+  );
+  fs.renameSync(temp, BEE_CHAIN_CRITICAL_FILE);
+}
+
+function removeOwnedBeeChainCriticalLease(): void {
+  try {
+    const current = JSON.parse(
+      fs.readFileSync(BEE_CHAIN_CRITICAL_FILE, "utf-8"),
+    );
+    if (current?.owner === BEE_CHAIN_CRITICAL_OWNER) {
+      fs.unlinkSync(BEE_CHAIN_CRITICAL_FILE);
+    }
+  } catch {
+    // Missing, stale or partially replaced lease: there is nothing to release.
+  }
+}
 
 export function enterBeeChainCritical(): void {
   chainCriticalCount += 1;
+  writeBeeChainCriticalLease();
 }
 
 export function leaveBeeChainCritical(): void {
   chainCriticalCount = Math.max(0, chainCriticalCount - 1);
+  if (chainCriticalCount === 0) {
+    removeOwnedBeeChainCriticalLease();
+  } else {
+    writeBeeChainCriticalLease();
+  }
 }
 
 export function isBeeChainCritical(): boolean {
-  return chainCriticalCount > 0;
+  if (chainCriticalCount > 0) {
+    return true;
+  }
+
+  try {
+    const lease = JSON.parse(
+      fs.readFileSync(BEE_CHAIN_CRITICAL_FILE, "utf-8"),
+    );
+    return Number(lease?.expiresAt) > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+export function releaseBeeChainCriticalLease(): void {
+  chainCriticalCount = 0;
+  removeOwnedBeeChainCriticalLease();
 }
 
 function minerPoolKey(params: {
@@ -264,6 +334,33 @@ export function discardMiner(params: {
 
   handle.stale = true;
   minerPool.delete(key);
+}
+
+// Use only at a confirmed epoch boundary after both the reward claim and the
+// previous session have settled. Unlike discardMiner(), this deliberately
+// tears down the wasm Miner so its background GraphQL event reader cannot leak
+// into the next epoch.
+export function disposeMiner(params: {
+  appId: string;
+  minerAddress: string;
+  publicKey: string;
+}): void {
+  const key = minerPoolKey(params);
+  const handle = minerPool.get(key);
+
+  if (!handle) {
+    return;
+  }
+
+  handle.stale = true;
+  minerPool.delete(key);
+  try {
+    handle.miner.free();
+  } catch (error) {
+    console.warn("Bee Miner disposal failed:", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 export type MinerEventSummary = {
@@ -389,7 +486,12 @@ const SUBMIT_POLL_MS = 250;
 // instead of by a person tapping a screen.
 export async function runMiningSession(
   handle: BeeMinerHandle,
-  options: { durationMs: number; tapCount?: number },
+  options: {
+    durationMs: number;
+    tapWindowMs?: number;
+    tapCount?: number;
+    onBeforeSubmit?: () => void;
+  },
 ): Promise<MiningSessionResult> {
   const { miner } = handle;
   const events: any[] = [];
@@ -461,7 +563,16 @@ export async function runMiningSession(
   }
 
   const tapCount = options.tapCount ?? 70;
-  const tapIntervalMs = Math.max(500, Math.floor(options.durationMs / Math.max(1, tapCount)));
+  // CappAckiMiner's observed 135-second session sends its 70 taps over a
+  // 120-second work window (~1.72s each), leaving 15 seconds before the SDK's
+  // own duration timer. Spreading taps over all 135 seconds made our manual
+  // stop race that timer and intermittently lose submit_session_root.
+  const tapWindowMs = Math.max(
+    1_000,
+    Math.min(options.tapWindowMs ?? options.durationMs, options.durationMs - 1_000),
+  );
+  const tapIntervalMs = Math.max(500, Math.floor(tapWindowMs / Math.max(1, tapCount)));
+  const tapWindowStartedAt = Date.now();
   let sent = 0;
 
   for (let i = 0; i < tapCount; i += 1) {
@@ -475,7 +586,17 @@ export async function runMiningSession(
       break;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, tapIntervalMs));
+    if (i + 1 < tapCount) {
+      await new Promise((resolve) => setTimeout(resolve, tapIntervalMs));
+    }
+  }
+
+  // Keep the work window deterministic even though the final tap does not need
+  // another interval after it. Submission then starts around 120s, safely ahead
+  // of the SDK's 135s automatic boundary.
+  const tapWindowRemainingMs = tapWindowStartedAt + tapWindowMs - Date.now();
+  if (!error && tapWindowRemainingMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, tapWindowRemainingMs));
   }
 
   // Fix: stop() explicitly submits results rather than waiting the full
@@ -486,6 +607,7 @@ export async function runMiningSession(
   let stopError: string | null = null;
 
   try {
+    options.onBeforeSubmit?.();
     miner.stop();
   } catch (caught) {
     stopError = caught instanceof Error ? caught.message : String(caught);

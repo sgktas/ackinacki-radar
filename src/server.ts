@@ -7,12 +7,10 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { getAckiNetworkStats, getAckiWalletActivity } from "./services/ackiProvider";
 import {
   collectReward as beeCollectReward,
-  createMiner as beeCreateMiner,
   discardMiner as beeDiscardMiner,
   generateMiningKeys as beeGenerateMiningKeys,
   isBeeChainCritical,
   resolveMinerAddress as beeResolveMinerAddress,
-  runMiningSession as beeRunMiningSession,
   waitForMiningKeyPropagation as beeWaitForMiningKeyPropagation,
 } from "./services/beeMiner";
 import {
@@ -443,9 +441,11 @@ function startTpsSampler() {
 
   const tick = async () => {
     try {
-      const stats = await getAckiNetworkStats();
-      if (stats && typeof stats.tps === "number") {
-        recordTpsSample(stats.tps);
+      if (!isBeeChainCritical()) {
+        const stats = await getAckiNetworkStats();
+        if (stats && typeof stats.tps === "number") {
+          recordTpsSample(stats.tps);
+        }
       }
     } catch (error) {
       // A missed sample is fine; the windows are averages over many.
@@ -916,6 +916,7 @@ type BeeMinerRecord = {
   lastSessionEpoch5mStart?: string | null;
   lastSessionEpochStatus?: "pending" | "accepted" | "tap_sum" | "failed" | null;
   lastClaimedEpoch5mStart?: string | null;
+  lastClaimSubmittedAt?: string | null;
   createdAt: string;
 };
 
@@ -947,6 +948,13 @@ let lastGoodChainStats: { data: any; atMs: number } | null = null;
 
 // The dashboard calls the feed stale past 60s, so force a read before that.
 const REWARD_FEED_FORCE_READ_AFTER_MS = 45 * 1000;
+// Bee owns the shared chain endpoint for the whole 135-second session. A
+// reward from the preceding claim can therefore become visible while that
+// lease is active. Allow exactly one tiny account read in the middle of each
+// mining lease: late enough to avoid a long-running claim, and early enough
+// to stay well clear of the root/proof submission near the session boundary.
+const REWARD_FEED_CRITICAL_SAFE_MIN_AGE_MS = 60 * 1000;
+const REWARD_FEED_CRITICAL_SAFE_MAX_AGE_MS = 100 * 1000;
 
 const rewardFeedPollRaw = Number(process.env.REWARD_FEED_POLL_MS || 15000);
 // The reward feed is a small, per-miner chain read. Keep it responsive without
@@ -1002,7 +1010,68 @@ const rewardLastTotal = new Map<string, number>(
   Object.entries(storedRewardFeedState.lastTotals),
 );
 const rewardLastChainReadAt = new Map<string, string>();
+let rewardLastForcedLeaseKey: string | null = null;
 let rewardFeedPollInFlight = false;
+
+function shouldForceRewardReadDuringBeeCritical(
+  miners: BeeMinerRecord[],
+): boolean {
+  try {
+    const leaseFile = path.join(
+      process.cwd(),
+      "data",
+      "bee-chain-critical.json",
+    );
+    const lease = JSON.parse(fs.readFileSync(leaseFile, "utf-8"));
+    const enteredAtMs = Date.parse(String(lease?.enteredAt || ""));
+    const expiresAtMs = Number(lease?.expiresAt || 0);
+    const now = Date.now();
+
+    if (
+      !Number.isFinite(enteredAtMs) ||
+      !Number.isFinite(expiresAtMs) ||
+      expiresAtMs <= now
+    ) {
+      return false;
+    }
+
+    const leaseAgeMs = now - enteredAtMs;
+    if (
+      leaseAgeMs < REWARD_FEED_CRITICAL_SAFE_MIN_AGE_MS ||
+      leaseAgeMs > REWARD_FEED_CRITICAL_SAFE_MAX_AGE_MS
+    ) {
+      return false;
+    }
+
+    const leaseKey = `${String(lease?.owner || "unknown")}:${String(
+      lease?.enteredAt || "",
+    )}`;
+    if (rewardLastForcedLeaseKey === leaseKey) {
+      return false;
+    }
+
+    const hasStaleRewardRead = miners.some((miner) => {
+      const lastReadAtMs = Date.parse(
+        rewardLastChainReadAt.get(miner.walletName) || "",
+      );
+      return (
+        !Number.isFinite(lastReadAtMs) ||
+        now - lastReadAtMs >= REWARD_FEED_FORCE_READ_AFTER_MS
+      );
+    });
+
+    if (!hasStaleRewardRead) {
+      return false;
+    }
+
+    // Mark before issuing the request. If the public endpoint times out, do
+    // not retry inside the same mining lease and risk drifting into submit.
+    rewardLastForcedLeaseKey = leaseKey;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function writeRewardFeedState(): void {
   const state: RewardFeedState = {
@@ -1091,16 +1160,10 @@ async function pollRewardFeed(): Promise<void> {
   // perfectly reachable. Let one read through when the last successful one is
   // older than this: it is a single account query (~70ms on the healthy half of
   // the endpoint), which is not what threatens a submission.
-  const oldestReadMs = Math.min(
-    ...miners.map((m) =>
-      Date.parse(rewardLastChainReadAt.get(m.walletName) ?? "") || 0,
-    ),
-  );
-  const readOverdue =
-    !Number.isFinite(oldestReadMs) ||
-    Date.now() - oldestReadMs > REWARD_FEED_FORCE_READ_AFTER_MS;
-
-  if (isBeeChainCritical() && !readOverdue) {
+  if (
+    isBeeChainCritical() &&
+    !shouldForceRewardReadDuringBeeCritical(miners)
+  ) {
     return;
   }
 
@@ -1131,10 +1194,22 @@ async function pollRewardFeed(): Promise<void> {
       continue;
     }
 
+    const rewardAt = new Date().toISOString();
+    const rewardAmount = total - previous;
     const feed = rewardFeed.get(miner.walletName) ?? [];
-    feed.push({ at: new Date().toISOString(), amount: total - previous });
+    feed.push({ at: rewardAt, amount: rewardAmount });
     rewardFeed.set(miner.walletName, feed.slice(-REWARD_FEED_MAX));
     writeRewardFeedState();
+
+    // A successful claim RPC only proves submission. The locked NACKL delta
+    // observed here is the authoritative reward confirmation.
+    const current = readBeeMinerState();
+    const currentMiner = current.miners.find((m) => m.id === miner.id);
+    if (currentMiner) {
+      currentMiner.lastRewardAt = rewardAt;
+      currentMiner.lastError = null;
+      writeBeeMinerState(current);
+    }
   }
 }
 
@@ -1833,15 +1908,9 @@ app.use(express.static(path.join(process.cwd(), "public")));
         intervalMs: 1200,
       });
 
-      const handle = await beeCreateMiner({
-        appId: record.appId,
-        minerAddress: record.minerAddress,
-        publicKey: record.publicKey,
-        secretKey: record.secretKey,
-      });
-
-      handle.miner.add_tap(Math.floor(Math.random() * 1000), Math.floor(Math.random() * 1000));
-
+      // Key propagation is the connection proof. Mining itself belongs only
+      // to the isolated Bee worker; the web process must not create a second
+      // Miner/event reader for this wallet.
       record.status = "active";
       record.lastError = null;
       writeBeeMinerState(state);
@@ -2159,27 +2228,14 @@ app.use(express.static(path.join(process.cwd(), "public")));
         intervalMs: 1200,
       });
 
-      const handle = await beeCreateMiner({
-        appId: record.appId,
-        minerAddress: record.minerAddress,
-        publicKey: record.publicKey,
-        secretKey: record.secretKey,
-      });
-
       // First-tap verification must go through a real (very short) session.
       // add_tap() on a freshly constructed Miner always throws "No running
       // workers to add tap to" — start() is what spawns the workers. This
       // endpoint called add_tap() directly, so dashboard connect could never
       // succeed even after a perfectly good approval, while /miner_connect in
       // the bot worked because it already used this helper.
-      const verification = await beeRunMiningSession(handle, {
-        durationMs: 3000,
-        tapCount: 1,
-      });
-
-      if (verification.error) {
-        throw new Error(verification.error);
-      }
+      // The isolated Bee worker performs the first real session. Keeping
+      // verification out of the web process prevents duplicate event readers.
 
       record.status = "active";
       record.lastError = null;

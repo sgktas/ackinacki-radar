@@ -6,7 +6,8 @@
   "scripts": {
     "test": "npm run typecheck",
     "typecheck": "tsc --noEmit",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "dev:bee": "tsx src/beeWorker.ts"
   },
   "keywords": [],
   "author": "",

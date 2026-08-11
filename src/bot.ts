@@ -46,9 +46,12 @@ import {
   createMiner as beeCreateMiner,
   acquireMiner as beeAcquireMiner,
   discardMiner as beeDiscardMiner,
+  disposeMiner as beeDisposeMiner,
   enterBeeChainCritical as beeEnterChainCritical,
   generateMiningKeys as beeGenerateMiningKeys,
+  isBeeChainCritical as beeIsChainCritical,
   leaveBeeChainCritical as beeLeaveChainCritical,
+  releaseBeeChainCriticalLease as beeReleaseChainCriticalLease,
   readMinerData as beeReadMinerData,
   resolveMinerAddress as beeResolveMinerAddress,
   summarizeMinerEvents as beeSummarizeMinerEvents,
@@ -421,6 +424,9 @@ type BeeMinerRecord = {
   // Updated only when the canonical five-minute chain value changes.
   lastEpoch5mChangedAt?: string | null;
   lastClaimedEpoch5mStart?: string | null;
+  // Submission time is not a confirmed reward. The web-side chain observer
+  // updates lastRewardAt only after the locked NACKL balance really increases.
+  lastClaimSubmittedAt?: string | null;
   // Wall-clock 5 minute claim slot. Unlike the chain epoch field above this
   // is a real timestamp bucket, so a slow GraphQL epoch observation cannot
   // silently turn a 5-minute reward cadence into a 10-minute one.
@@ -3474,7 +3480,12 @@ async function runMiningMonitorTick(bot: Telegraf<any>, trigger = "auto") {
   // Bee uses the same public GraphQL pool as the broad wallet monitor.  Do
   // not flood that pool while a Bee session or reward claim is live; a missed
   // canonical epoch costs more than a delayed non-Bee wallet scan.
-  if (beeSessionRunning.size || beeClaimRunning.size || beeSubmissionSettling.size) {
+  if (
+    beeIsChainCritical() ||
+    beeSessionRunning.size ||
+    beeClaimRunning.size ||
+    beeSubmissionSettling.size
+  ) {
     console.log("Mining monitor tick deferred: Bee chain critical section active");
     return;
   }
@@ -3827,6 +3838,10 @@ const BEE_MINING_SESSION_DURATION_MS =
   // is 135 seconds long once the SDK's own finalization margin is included.
   // Use the observed 135-second lifecycle so our 70 taps match the reference.
   Number(process.env.BEE_MINING_SESSION_SECONDS || 135) * 1000;
+const BEE_MINING_TAP_WINDOW_MS = Math.min(
+  BEE_MINING_SESSION_DURATION_MS - 1_000,
+  Number(process.env.BEE_MINING_TAP_WINDOW_SECONDS || 120) * 1000,
+);
 const BEE_MINING_TAP_COUNT = Number(process.env.BEE_MINING_TAP_COUNT || 70);
 // Same cap the dashboard uses (server.ts). The chain's own cycle clock is
 // fixed and not something this bot tracks or needs to: once tap_sum reaches
@@ -3836,13 +3851,12 @@ const BEE_MINING_TAP_COUNT = Number(process.env.BEE_MINING_TAP_COUNT || 70);
 // wait time, just watch tap_sum and resume as soon as it drops.
 const BEE_CYCLE_TAP_CAP = Number(process.env.BEE_CYCLE_TAP_CAP || 12000);
 
-// A root-submit error leaves the on-chain result ambiguous.  The reference
-// miner does not tap again in that same epoch: it rebuilds and waits for the
-// next canonical epoch instead.  Keeping this at zero prevents an accidental
-// second 70-tap session from being manufactured for one epoch.
-const BEE_CONGESTION_RETRIES = Number(process.env.BEE_CONGESTION_RETRIES || 0);
+// Retry only a definite root failure whose tap sum stayed unchanged. One retry
+// still fits in the ~335-second canonical epoch after a 135-second first try;
+// more would normally cross the boundary and risk attributing taps wrongly.
+const BEE_CONGESTION_RETRIES = Number(process.env.BEE_CONGESTION_RETRIES || 1);
 const BEE_CONGESTION_RETRY_DELAY_MS = Number(
-  process.env.BEE_CONGESTION_RETRY_DELAY_MS || 1000,
+  process.env.BEE_CONGESTION_RETRY_DELAY_MS || 2000,
 );
 const BEE_CONGESTION_READY_TIMEOUT_MS = Math.max(
   BEE_CONGESTION_RETRY_DELAY_MS,
@@ -4659,7 +4673,12 @@ function queueBeeEpochClaim(
   if (pending?.epoch5mStart === epoch5mStart || beeClaimRunning.has(key)) {
     return;
   }
-  if ((beeClaimRetryUntil.get(key) ?? 0) > Date.now()) {
+  const retryRemainingMs = (beeClaimRetryUntil.get(key) ?? 0) - Date.now();
+  if (retryRemainingMs > 0) {
+    setTimeout(
+      () => queueBeeEpochClaim(miner, epoch5mStart),
+      retryRemainingMs + 250,
+    );
     return;
   }
 
@@ -4671,6 +4690,7 @@ function queueBeeEpochClaim(
     void (async () => {
       beePendingEpochClaims.delete(key);
       beeClaimRunning.add(key);
+      beeEnterChainCritical();
 
       try {
         const state = readBeeMinerState();
@@ -4709,7 +4729,7 @@ function queueBeeEpochClaim(
 
         updateBeeMinerRecord(fresh.id, (row) => {
           row.lastClaimedEpoch5mStart = epoch5mStart;
-          row.lastRewardAt = new Date().toISOString();
+          row.lastClaimSubmittedAt = new Date().toISOString();
           row.lastError = null;
         });
         beeClaimRetryUntil.delete(key);
@@ -4734,9 +4754,10 @@ function queueBeeEpochClaim(
         beeClaimRetryUntil.set(key, Date.now() + BEE_EPOCH_RECOVERY_DELAY_MS);
         setTimeout(
           () => queueBeeEpochClaim(miner, epoch5mStart),
-          BEE_EPOCH_RECOVERY_DELAY_MS,
+          BEE_EPOCH_RECOVERY_DELAY_MS + 250,
         );
       } finally {
+        beeLeaveChainCritical();
         beeClaimRunning.delete(key);
       }
     })();
@@ -5103,7 +5124,10 @@ async function waitForBeeSubmissionSettlement(params: {
   };
 }
 
-async function runBeeContinuousSession(miner: BeeMinerRecord): Promise<void> {
+async function runBeeContinuousSession(
+  miner: BeeMinerRecord,
+  canonicalEpoch5mStart: string,
+): Promise<void> {
   if (!miner.minerAddress) {
     return;
   }
@@ -5113,7 +5137,17 @@ async function runBeeContinuousSession(miner: BeeMinerRecord): Promise<void> {
     return;
   }
   beeSessionRunning.add(key);
-  beeEnterChainCritical();
+  let submissionCritical = false;
+  const beginSubmissionCritical = () => {
+    if (!submissionCritical) {
+      submissionCritical = true;
+      beeEnterChainCritical();
+    }
+  };
+  // Bee's SDK keeps a live GraphQL event reader for the whole 135-second
+  // computation, not only for root/proof submission. Keep low-priority wallet
+  // scans out of that entire window; they resume as soon as settlement ends.
+  beginSubmissionCritical();
 
   try {
     const handle = await beeAcquireMiner({
@@ -5132,15 +5166,17 @@ async function runBeeContinuousSession(miner: BeeMinerRecord): Promise<void> {
     if (dataBefore) {
       // From this point this epoch has consumed its single logical session,
       // even if the submission later becomes ambiguous.
-      beeSessionEpoch5m.set(key, dataBefore.epoch5mStart);
+      beeSessionEpoch5m.set(key, canonicalEpoch5mStart);
       updateBeeMinerRecord(miner.id, (row) => {
-        row.lastSessionEpoch5mStart = dataBefore.epoch5mStart;
+        row.lastSessionEpoch5mStart = canonicalEpoch5mStart;
         row.lastSessionEpochStatus = "pending";
       });
     }
     let result = await beeRunMiningSession(handle, {
       durationMs: BEE_MINING_SESSION_DURATION_MS,
+      tapWindowMs: BEE_MINING_TAP_WINDOW_MS,
       tapCount: BEE_MINING_TAP_COUNT,
+      onBeforeSubmit: beginSubmissionCritical,
     });
     let retries = 0;
     let retryReadyTimedOut = false;
@@ -5179,7 +5215,9 @@ async function runBeeContinuousSession(miner: BeeMinerRecord): Promise<void> {
 
       result = await beeRunMiningSession(handle, {
         durationMs: BEE_MINING_SESSION_DURATION_MS,
+        tapWindowMs: BEE_MINING_TAP_WINDOW_MS,
         tapCount: BEE_MINING_TAP_COUNT,
+        onBeforeSubmit: beginSubmissionCritical,
       });
     }
 
@@ -5198,6 +5236,73 @@ async function runBeeContinuousSession(miner: BeeMinerRecord): Promise<void> {
       } finally {
         beeSubmissionSettling.delete(key);
       }
+    }
+
+    // A root failure commonly arrives after runMiningSession()'s submit grace,
+    // during settlement. The old retry loop above therefore saw no error and
+    // `retries` stayed zero. Retry this definite zero-delta failure once, but
+    // only while the canonical epoch is still the one this session belongs to.
+    while (
+      !retryReadyTimedOut &&
+      settlement &&
+      !settlement.accepted &&
+      settlement.source === "sdk_error" &&
+      isRootSubmitFailure(settlement.summary.errors) &&
+      retries < BEE_CONGESTION_RETRIES
+    ) {
+      const currentEpoch5mStart = await readChainEpoch5mStart();
+      if (
+        currentEpoch5mStart &&
+        currentEpoch5mStart !== canonicalEpoch5mStart
+      ) {
+        console.warn("Bee late root retry skipped after canonical epoch change:", {
+          walletName: miner.walletName,
+          sessionEpoch5mStart: canonicalEpoch5mStart,
+          currentEpoch5mStart,
+        });
+        break;
+      }
+
+      retries += 1;
+      console.warn("Bee late root failure retry (same miner):", {
+        walletName: miner.walletName,
+        attempt: `${retries}/${BEE_CONGESTION_RETRIES}`,
+        delayMs: BEE_CONGESTION_RETRY_DELAY_MS,
+      });
+      await sleep(BEE_CONGESTION_RETRY_DELAY_MS);
+
+      const ready = await waitForBeeMinerReady(
+        handle,
+        BEE_CONGESTION_READY_TIMEOUT_MS,
+      );
+      if (!ready) {
+        retryReadyTimedOut = true;
+        break;
+      }
+
+      const retryTapSumBefore = settlement.data?.tapSum ?? dataBefore?.tapSum ?? null;
+      result = await beeRunMiningSession(handle, {
+        durationMs: BEE_MINING_SESSION_DURATION_MS,
+        tapWindowMs: BEE_MINING_TAP_WINDOW_MS,
+        tapCount: BEE_MINING_TAP_COUNT,
+        onBeforeSubmit: beginSubmissionCritical,
+      });
+
+      beeSubmissionSettling.add(key);
+      try {
+        settlement = await waitForBeeSubmissionSettlement({
+          handle,
+          events: result.events,
+          tapSumBefore: retryTapSumBefore,
+        });
+      } finally {
+        beeSubmissionSettling.delete(key);
+      }
+    }
+
+    if (submissionCritical) {
+      beeLeaveChainCritical();
+      submissionCritical = false;
     }
     const finalSummary = settlement?.summary ?? result.submitSummary;
     const dataAfter = settlement?.data ?? (await beeReadMinerData(handle));
@@ -5242,7 +5347,10 @@ async function runBeeContinuousSession(miner: BeeMinerRecord): Promise<void> {
       if (dataAfter) {
         row.lastTapSum = dataAfter.tapSum;
         row.lastTapSumAt = new Date().toISOString();
-        row.lastEpoch5mStart = dataAfter.epoch5mStart;
+        // Never overwrite the canonical block-derived epoch with the Miner
+        // contract's stored copy; that copy advances only when the contract is
+        // touched and can lag by one or more epochs.
+        row.lastEpoch5mStart = canonicalEpoch5mStart;
       }
     });
 
@@ -5343,7 +5451,9 @@ async function runBeeContinuousSession(miner: BeeMinerRecord): Promise<void> {
   } finally {
     beeSubmissionSettling.delete(key);
     beeSessionRunning.delete(key);
-    beeLeaveChainCritical();
+    if (submissionCritical) {
+      beeLeaveChainCritical();
+    }
   }
 }
 
@@ -5365,7 +5475,17 @@ async function runBeeAutopilotPulse(): Promise<void> {
     for (const miner of activeMiners) {
       try {
         const key = beeMinerKey(miner);
-        if (!miner.minerAddress || beeSubmissionSettling.has(key)) {
+        // Never probe the same SDK Miner while a session or reward claim owns
+        // it. Those overlapping readMinerData/event queries were filling the
+        // public GraphQL connection pool even after Bee moved to its own PM2
+        // process.
+        if (
+          !miner.minerAddress ||
+          beeSessionRunning.has(key) ||
+          beeSubmissionSettling.has(key) ||
+          beeClaimRunning.has(key) ||
+          beePendingEpochClaims.has(key)
+        ) {
           continue;
         }
         const handle = await beeAcquireMiner({
@@ -5408,7 +5528,7 @@ async function runBeeAutopilotPulse(): Promise<void> {
           // Claim succeeded: rebuild once at the canonical boundary, exactly
           // like the reference miner's "reset / new Miner" transition.
           beePendingEpochRefresh.delete(key);
-          beeDiscardMiner({
+          beeDisposeMiner({
             appId: miner.appId,
             minerAddress: miner.minerAddress,
             publicKey: miner.publicKey,
@@ -5461,7 +5581,7 @@ async function runBeeAutopilotPulse(): Promise<void> {
 
         if (beeCanStartMining(handle)) {
           availableStarts -= 1;
-          void runBeeContinuousSession(miner);
+          void runBeeContinuousSession(miner, epoch.data.epoch5mStart);
         }
       } catch (error) {
         console.warn("Bee autopilot miner probe failed:", {
@@ -5475,10 +5595,10 @@ async function runBeeAutopilotPulse(): Promise<void> {
   }
 }
 
-function startBeeMiningScheduler() {
+function startBeeMiningScheduler(): boolean {
   if (!BEE_MINING_ENABLED) {
     console.log("Bee mining scheduler disabled by BEE_MINING_ENABLED=false");
-    return;
+    return false;
   }
 
   if (!BEE_APP_ID) {
@@ -5486,7 +5606,7 @@ function startBeeMiningScheduler() {
       "Bee mining scheduler NOT started: BEE_APP_ID is not set. Get one from " +
         "the Acki Nacki team (contact @EugeneDAO on Telegram) and set it in .env.",
     );
-    return;
+    return false;
   }
 
   if (beeMiningTimer) {
@@ -5495,6 +5615,7 @@ function startBeeMiningScheduler() {
 
   console.log("Bee mining state-driven autopilot started:", {
     sessionSeconds: Math.round(BEE_MINING_SESSION_DURATION_MS / 1000),
+    tapWindowSeconds: Math.round(BEE_MINING_TAP_WINDOW_MS / 1000),
     tapCount: BEE_MINING_TAP_COUNT,
     concurrency: BEE_MINING_CONCURRENCY,
     pulseMs: BEE_ENGINE_PULSE_MS,
@@ -5509,6 +5630,27 @@ function startBeeMiningScheduler() {
   };
 
   scheduleNext(BEE_MINING_INITIAL_DELAY_MS);
+  return true;
+}
+
+export function startBeeWorker(): void {
+  if (!startBeeMiningScheduler()) {
+    throw new Error("Bee worker could not start; check BEE_MINING_ENABLED/BEE_APP_ID");
+  }
+
+  console.log("Bee isolated worker online:", {
+    pid: process.pid,
+    role: "bee-only",
+  });
+
+  const stop = (signal: "SIGINT" | "SIGTERM") => {
+    if (beeMiningTimer) clearTimeout(beeMiningTimer);
+    beeReleaseChainCriticalLease();
+    console.log("Bee isolated worker stopping:", { signal });
+  };
+
+  process.once("SIGINT", () => stop("SIGINT"));
+  process.once("SIGTERM", () => stop("SIGTERM"));
 }
 
 // Fix: SHELL payment detection for subscription plans. We only have
@@ -5783,7 +5925,7 @@ let nacklPaymentsTimer: ReturnType<typeof setTimeout> | undefined;
 let nacklPaymentsRunning = false;
 
 async function runNacklPaymentsCheckTick(bot: Telegraf<any>) {
-  if (nacklPaymentsRunning) return;
+  if (nacklPaymentsRunning || beeIsChainCritical()) return;
   nacklPaymentsRunning = true;
 
   try {
@@ -5917,7 +6059,7 @@ function startNacklPaymentsScheduler(bot: Telegraf<any>) {
     console.log(
       "NACKL payments scheduler disabled (NACKL_PAYMENTS_CHECK_ENABLED / wallet)",
     );
-    return;
+    return false;
   }
 
   if (nacklPaymentsTimer) clearTimeout(nacklPaymentsTimer);
@@ -6200,7 +6342,7 @@ async function runPaymentsCheckTickBalanceDiff(
 }
 
 async function runPaymentsCheckTick(bot: Telegraf<any>) {
-  if (paymentsCheckRunning) return;
+  if (paymentsCheckRunning || beeIsChainCritical()) return;
 
   paymentsCheckRunning = true;
 
@@ -6469,7 +6611,7 @@ async function replyDebugPopit(ctx: any) {
         "/debug_popit ackerman",
       ].join("\n"),
     );
-    return;
+    return false;
   }
 
   try {
@@ -8595,7 +8737,6 @@ export async function startBot(botToken: string) {
     );
   }
 
-  startBeeMiningScheduler();
   startPaymentsCheckScheduler(bot);
   startTonPaymentsScheduler(bot);
   startNacklPaymentsScheduler(bot);
