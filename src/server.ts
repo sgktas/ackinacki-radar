@@ -2601,6 +2601,15 @@ app.use(express.static(path.join(process.cwd(), "public")));
         // Telegram sign-ins are the ones with a positive id; negatives are
         // leftovers from the removed wallet-name login.
         telegram: users.filter((u: any) => Number(u.telegramId) > 0).length,
+        list: users.map((u: any) => ({
+          telegramId: u.telegramId,
+          firstName: u.firstName ?? null,
+          username: u.username ?? null,
+          referralCode: u.referralCode ?? null,
+          referredBy: u.referredBy ?? null,
+          points: u.points ?? 0,
+          createdAt: u.createdAt ?? null,
+        })),
       },
       miners: {
         total: minerState.miners.length,
@@ -2628,10 +2637,32 @@ app.use(express.static(path.join(process.cwd(), "public")));
         pendingInvoices: (payments.pendingInvoices || []).length,
         starsCharges: ((payments as any).starsCharges || []).length,
         tonLastLt: (payments as any).tonLastLt ?? 0,
+        pendingInvoiceList: (payments.pendingInvoices || []).map((inv: any) => ({
+          chatId: inv.chatId ?? null,
+          planId: inv.planId ?? null,
+          code: inv.code ?? null,
+          amount: inv.amount ?? inv.amountRaw ?? null,
+          currency: inv.currency ?? null,
+          createdAt: inv.createdAt ?? null,
+          expiresAt: inv.expiresAt ?? null,
+        })),
+        starsChargeList: ((payments as any).starsCharges || []).slice(-100),
+        trialUsedList: ((payments as any).trialUsed || []),
       },
       radar: {
         watches: monitor.length,
         systemWatches: monitor.filter((w: any) => w.chatId === 0).length,
+        list: monitor.map((w: any) => ({
+          chatId: w.chatId ?? null,
+          label: w.label ?? null,
+          input: w.input ?? null,
+          lastCheckedAt: w.lastCheckedAt ?? null,
+          lastEventAt:
+            Array.isArray(w.events) && w.events.length
+              ? w.events[w.events.length - 1]?.at ?? null
+              : null,
+          eventCount: Array.isArray(w.events) ? w.events.length : 0,
+        })),
       },
       updatedAt: new Date().toISOString(),
     });
