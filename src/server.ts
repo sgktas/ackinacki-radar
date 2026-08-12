@@ -5,6 +5,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { getAckiNetworkStats, getAckiWalletActivity } from "./services/ackiProvider";
+import { isAdminTestModeOn, setAdminTestMode } from "./bot";
 import {
   collectReward as beeCollectReward,
   discardMiner as beeDiscardMiner,
@@ -443,6 +444,12 @@ function startTpsSampler() {
     try {
       if (!isBeeChainCritical()) {
         const stats = await getAckiNetworkStats();
+
+        // This sampler is the single owner of the expensive network-stats read.
+        // Public HTTP traffic must consume this snapshot instead of triggering
+        // its own blocks(last:300) GraphQL query.
+        lastGoodChainStats = { data: stats, atMs: Date.now() };
+
         if (stats && typeof stats.tps === "number") {
           recordTpsSample(stats.tps);
         }
@@ -2518,33 +2525,27 @@ app.use(express.static(path.join(process.cwd(), "public")));
   // the landing page makes a single request instead of two. Chain half is
   // allowed to fail on its own (mainnet hiccup, rate limit) without taking the
   // mining half down with it — the page then just hides those tiles.
-  app.get("/api/radar/stats", async (_req, res) => {
+  app.get("/api/radar/stats", (_req, res) => {
     const mining = getRadarMiningStats();
+
     let chain: any = null;
-
-    try {
-      chain = await getAckiNetworkStats();
-      lastGoodChainStats = { data: chain, atMs: Date.now() };
-    } catch (error) {
-      console.error("Radar stats: chain half failed:", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    // Measured 2026-08-10: mainnet's block index answers `blocks(last:N)` only
-    // about one time in eight ("pool timed out"), while account queries on the
-    // same endpoint are fine. Returning null on every miss made the page drop
-    // its TPS and block tiles at random. Serve the last good reading with its
-    // age instead, and let the page decide how to label it — a number a minute
-    // old is far more useful than an empty tile.
     let chainStale = false;
+    let chainAgeSeconds: number | null = null;
 
-    if (!chain && lastGoodChainStats) {
+    // Public requests must never trigger the expensive blocks(last:300)
+    // mainnet query. The background TPS sampler owns that read and refreshes
+    // lastGoodChainStats on its normal cadence.
+    if (lastGoodChainStats) {
       const ageMs = Date.now() - lastGoodChainStats.atMs;
+      chainAgeSeconds = Math.round(ageMs / 1000);
 
       if (ageMs <= CHAIN_STATS_MAX_STALE_MS) {
         chain = lastGoodChainStats.data;
-        chainStale = true;
+
+        // Normal sampler cadence is 60s. Mark data stale only when it is
+        // meaningfully older than one cadence, while still serving it for the
+        // existing 10-minute stale window.
+        chainStale = ageMs > TPS_SAMPLE_INTERVAL_MS + 15_000;
       }
     }
 
@@ -2552,9 +2553,7 @@ app.use(express.static(path.join(process.cwd(), "public")));
       ok: true,
       chain,
       chainStale,
-      chainAgeSeconds: lastGoodChainStats
-        ? Math.round((Date.now() - lastGoodChainStats.atMs) / 1000)
-        : null,
+      chainAgeSeconds,
       mining,
       tpsHistory: getTpsHistorySummary(),
     });
@@ -2706,6 +2705,18 @@ app.use(express.static(path.join(process.cwd(), "public")));
     });
 
     res.json({ ok: true, activeUntil });
+  });
+
+  // Admin-panel on/off toggle for /testmode (see bot.ts). Same session as
+  // the rest of the admin surface, so no separate auth path to maintain.
+  app.get("/api/admin/testmode", requireAdminAuth, (req: any, res) => {
+    res.json({ ok: true, active: isAdminTestModeOn(req.telegramId) });
+  });
+
+  app.post("/api/admin/testmode", requireAdminAuth, (req: any, res) => {
+    const on = req.body?.on === true;
+    setAdminTestMode(req.telegramId, on);
+    res.json({ ok: true, active: on });
   });
 
   app.get("/api/radar/wallet-count", (_req, res) => {

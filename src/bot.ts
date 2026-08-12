@@ -224,6 +224,20 @@ const BOT_ADMIN_IDS = new Set(
 // here can never lock anyone out of the admin commands.
 const adminTestMode = new Set<number>();
 
+// Read/write access for the admin panel's on/off toggle (mirrors /testmode).
+export function isAdminTestModeOn(chatId: number): boolean {
+  return adminTestMode.has(chatId);
+}
+
+export function setAdminTestMode(chatId: number, on: boolean): void {
+  if (on) {
+    adminTestMode.add(chatId);
+  } else {
+    adminTestMode.delete(chatId);
+  }
+  console.log("Admin test mode:", { chatId, testMode: on });
+}
+
 // Ignores the toggle. Used by /testmode itself and by the 1-star test plan, so
 // turning privileges off cannot strand the operator without a way back.
 function isRealAdminChatId(chatId: number): boolean {
@@ -501,6 +515,13 @@ type PaymentsState = {
   // new subscriptions on the first successful chain read.
   seenNacklMessageIds?: string[];
   nacklBaselineReady?: boolean;
+  // Last account transaction LT observed after a successful NACKL message scan.
+  // Keep it as a string: chain logical times may exceed JS safe integer range.
+  nacklLastTransactionLt?: string | null;
+  // A changed account LT is scanned repeatedly for a short settle window
+  // before becoming the stable cursor. The message index can lag account.info.
+  nacklPendingTransactionLt?: string | null;
+  nacklPendingTransactionSince?: number | null;
   // chatIds that have ever taken the free trial. Kept separately from
   // `subscriptions` because that record gets overwritten by a later purchase,
   // which would otherwise hand the same person a second trial.
@@ -544,6 +565,18 @@ function readPaymentsState(): PaymentsState {
       ? parsed.seenNacklMessageIds
       : [],
     nacklBaselineReady: parsed?.nacklBaselineReady === true,
+    nacklLastTransactionLt:
+      parsed?.nacklLastTransactionLt == null
+        ? null
+        : String(parsed.nacklLastTransactionLt),
+    nacklPendingTransactionLt:
+      parsed?.nacklPendingTransactionLt == null
+        ? null
+        : String(parsed.nacklPendingTransactionLt),
+    nacklPendingTransactionSince:
+      Number.isFinite(Number(parsed?.nacklPendingTransactionSince))
+        ? Number(parsed.nacklPendingTransactionSince)
+        : null,
     tonLastLt: Number.isFinite(Number(parsed?.tonLastLt))
       ? Number(parsed.tonLastLt)
       : 0,
@@ -2177,6 +2210,7 @@ function findUserByTelegramId(telegramId: number) {
 const WALLET_ADD_PROMPT = "Send the Acki Nacki wallet name you want to connect:";
 
 const MENU_PLANS = "⭐ Pay with Stars";
+const MENU_TRIAL = "🎁 3-Day Trial";
 const MENU_WALLETS = "👛 Wallets";
 const MENU_PANEL = "🌐 Dashboard";
 const MENU_HELP = "ℹ️ Help";
@@ -2272,7 +2306,7 @@ async function sendWalletsScreen(ctx: any) {
 
 function buildMainKeyboard() {
   return Markup.keyboard([
-    [MENU_PLANS],
+    [MENU_TRIAL, MENU_PLANS],
     [MENU_WALLETS],
     [MENU_PANEL, MENU_HELP],
   ]).resize();
@@ -2300,6 +2334,23 @@ function buildWelcomeMessage() {
     "Not official.",
     "",
     "Choose an action below:",
+  ].join("\n");
+}
+
+// Shown once, right after the welcome card, so a brand-new user sees the
+// whole login -> connect -> mine path before they have to guess at it.
+function buildHowToUseMessage() {
+  return [
+    "📖 How it works",
+    "",
+    `1) Try it free \u2014 tap "${MENU_TRIAL}" below (${TRIAL_DAYS} days, no payment needed).`,
+    "2) Open the dashboard: https://ackinackiradar.com",
+    "3) Press \u201cTelegram ile devam et\u201d to sign in with this same account.",
+    "4) Enter your Acki Nacki wallet name and press Connect.",
+    "5) Approve the request in your wallet app, then press Check \u2014 mining starts automatically once connected.",
+    "",
+    `Prefer Telegram? Use "${MENU_WALLETS}" to manage wallets or "${MENU_PLANS}" to see paid plans.`,
+    `Need help any time \u2014 tap "${MENU_HELP}".`,
   ].join("\n");
 }
 
@@ -5921,6 +5972,10 @@ const NACKL_PAYMENTS_CHECK_ENABLED =
 const NACKL_PAYMENTS_CHECK_INTERVAL_MS =
   Number(process.env.NACKL_PAYMENTS_CHECK_INTERVAL_SECONDS || 45) * 1000;
 
+// account.info can advance before the indexed messages query catches up.
+// Keep rescanning a changed LT for at least 90s before considering it stable.
+const NACKL_LT_SETTLE_MS = 90 * 1000;
+
 let nacklPaymentsTimer: ReturnType<typeof setTimeout> | undefined;
 let nacklPaymentsRunning = false;
 
@@ -5929,12 +5984,37 @@ async function runNacklPaymentsCheckTick(bot: Telegraf<any>) {
   nacklPaymentsRunning = true;
 
   try {
+    // Cheap change detector: account.info.last_trans_lt is served by the
+    // lightweight account path. Only hit the expensive messages index when
+    // the payments wallet actually changed.
+    let currentNacklTransactionLt: string | null = null;
+
+    try {
+      const accountInfo = await getShellBalance(NACKL_PAYMENTS_WALLET_NAME);
+      currentNacklTransactionLt = accountInfo.lastTransactionLt;
+
+      const snapshot = readPaymentsState();
+
+      if (
+        snapshot.nacklBaselineReady &&
+        currentNacklTransactionLt &&
+        snapshot.nacklLastTransactionLt === currentNacklTransactionLt
+      ) {
+        return;
+      }
+    } catch (error) {
+      console.error("NACKL payments check: LT precheck failed:", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
     let transfers;
 
     try {
       transfers = await getIncomingNacklTransfers(
         NACKL_PAYMENTS_WALLET_NAME,
-        100,
+        20,
       );
     } catch (error) {
       console.error("NACKL payments check: fetch failed:", {
@@ -5952,6 +6032,9 @@ async function runNacklPaymentsCheckTick(bot: Telegraf<any>) {
       for (const transfer of transfers) seen.add(transfer.id);
       state.seenNacklMessageIds = Array.from(seen).slice(-1000);
       state.nacklBaselineReady = true;
+      state.nacklLastTransactionLt = currentNacklTransactionLt;
+      state.nacklPendingTransactionLt = null;
+      state.nacklPendingTransactionSince = null;
       writePaymentsState(state);
       console.log("NACKL payments: baseline established:", {
         skipped: transfers.length,
@@ -6022,6 +6105,32 @@ async function runNacklPaymentsCheckTick(bot: Telegraf<any>) {
     state.pendingInvoices = state.pendingInvoices.filter(
       (invoice) => new Date(invoice.expiresAt).getTime() > now,
     );
+    if (currentNacklTransactionLt) {
+      const pendingSameLt =
+        state.nacklPendingTransactionLt === currentNacklTransactionLt;
+      const pendingSince =
+        typeof state.nacklPendingTransactionSince === "number"
+          ? state.nacklPendingTransactionSince
+          : null;
+
+      if (
+        pendingSameLt &&
+        pendingSince !== null &&
+        Date.now() - pendingSince >= NACKL_LT_SETTLE_MS
+      ) {
+        // The same account LT survived the settle window and the messages
+        // index has now been scanned repeatedly. It is safe to make it stable.
+        state.nacklLastTransactionLt = currentNacklTransactionLt;
+        state.nacklPendingTransactionLt = null;
+        state.nacklPendingTransactionSince = null;
+      } else if (!pendingSameLt) {
+        // First sighting of this LT. Do not advance the stable cursor yet:
+        // give the messages index time to catch up.
+        state.nacklPendingTransactionLt = currentNacklTransactionLt;
+        state.nacklPendingTransactionSince = Date.now();
+      }
+    }
+
     writePaymentsState(state);
 
     // Persist the credit and cursor before making any Telegram request. A
@@ -6991,6 +7100,7 @@ export async function startBot(botToken: string) {
     // inline card: it stays put after every message, so the common actions are
     // always one tap away instead of being scrolled out of history.
     await ctx.reply(buildWelcomeMessage(), buildMainKeyboard());
+    await ctx.reply(buildHowToUseMessage());
 
     // Website search box deep link (ackinackiradar.com). Telegram caps
     // start payloads at 64 chars, [A-Za-z0-9_] only. A raw wallet address is
@@ -7178,7 +7288,7 @@ export async function startBot(botToken: string) {
     );
   });
 
-  bot.command("trial", async (ctx) => {
+  async function handleTrialRequest(ctx: any) {
     const chatId = ctx.chat?.id;
 
     if (!chatId) {
@@ -7220,7 +7330,10 @@ export async function startBot(botToken: string) {
         "3) Approve in your wallet app, then press Check",
       ].join("\n"),
     );
-  });
+  }
+
+  bot.command("trial", handleTrialRequest);
+  bot.hears(MENU_TRIAL, handleTrialRequest);
 
   // /wallets is the name people look for; /forget kept as an alias so anything
   // that already tells users to type it keeps working.
