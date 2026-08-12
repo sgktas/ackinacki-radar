@@ -79,6 +79,69 @@ const usersFile = path.join(dataDir, "users.json");
 const miningMonitorFile = path.join(dataDir, "mining-monitor.json");
 const beeMinerFile = path.join(dataDir, "bee-miners.json");
 const paymentsFile = path.join(dataDir, "payments.json");
+const blockedChatsFile = path.join(dataDir, "blocked-chats.json");
+
+// Telegram answers 403 "bot was blocked by the user" forever once someone
+// blocks the bot. Every scheduled push kept retrying those chats on every
+// tick, which produced ~35k identical errors in six weeks and burned an API
+// call each time. Remember who blocked us and stop pushing to them; /start
+// clears the flag, which is the only way back anyway.
+let blockedChatsCache: Set<number> | null = null;
+
+function readBlockedChats(): Set<number> {
+  if (blockedChatsCache) return blockedChatsCache;
+
+  try {
+    const raw = fs.readFileSync(blockedChatsFile, "utf-8");
+    const parsed = JSON.parse(raw);
+    blockedChatsCache = new Set(
+      Array.isArray(parsed) ? parsed.map((id: any) => Number(id)).filter(Number.isFinite) : [],
+    );
+  } catch {
+    blockedChatsCache = new Set();
+  }
+
+  return blockedChatsCache;
+}
+
+function writeBlockedChats(set: Set<number>) {
+  ensureStorage();
+  fs.writeFileSync(blockedChatsFile, JSON.stringify([...set], null, 2), "utf-8");
+}
+
+export function isChatBlocked(chatId: number): boolean {
+  return readBlockedChats().has(Number(chatId));
+}
+
+// Only a 403 counts. A 502/timeout is transient and must NOT retire a chat.
+function isBlockedByUserError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /403/.test(message) && /blocked by the user|user is deactivated/i.test(message);
+}
+
+function markChatBlocked(chatId: number) {
+  const set = readBlockedChats();
+  if (set.has(Number(chatId))) return;
+  set.add(Number(chatId));
+  writeBlockedChats(set);
+  console.log("Chat marked as blocked, push notifications stopped:", { chatId });
+}
+
+function unmarkChatBlocked(chatId: number) {
+  const set = readBlockedChats();
+  if (!set.delete(Number(chatId))) return;
+  writeBlockedChats(set);
+  console.log("Chat unblocked, push notifications resumed:", { chatId });
+}
+
+// Wraps the catch side of every scheduled push: records a hard block once,
+// leaves transient failures alone.
+function noteNotificationFailure(chatId: number, error: unknown) {
+  if (isBlockedByUserError(error)) {
+    markChatBlocked(chatId);
+  }
+}
+
 const MINING_MONITOR_INTERVAL_MS =
   Number(process.env.MINING_MONITOR_INTERVAL_SECONDS || 60) * 1000;
 const MINING_MONITOR_INITIAL_DELAY_MS = 15 * 1000;
@@ -3409,7 +3472,7 @@ async function updateMiningWatchRecord(
         options.sendNotifications !== false &&
         isMiningWatchNotificationEnabled(watch);
 
-      if (bot && shouldNotify) {
+      if (bot && shouldNotify && !isChatBlocked(watch.chatId)) {
         try {
           await sendMessageWithOptionalHtml(
             bot,
@@ -3419,6 +3482,7 @@ async function updateMiningWatchRecord(
           watch.lastNotifyAt = now;
           notified = true;
         } catch (error) {
+          noteNotificationFailure(watch.chatId, error);
           console.error("Mining monitor notification send failed:", {
             watch: watch.label || watch.input,
             chatId: watch.chatId,
@@ -3758,6 +3822,10 @@ async function runMiningMonitorTick(bot: Telegraf<any>, trigger = "auto") {
     );
 
     for (const [chatId, batch] of chatRewardBatches) {
+      if (isChatBlocked(chatId)) {
+        continue;
+      }
+
       try {
         await sendGroupedRewardMessage(
           bot,
@@ -3773,6 +3841,7 @@ async function runMiningMonitorTick(bot: Telegraf<any>, trigger = "auto") {
           entry.subscriber.lastNotifyAt = now;
         }
       } catch (error) {
+        noteNotificationFailure(chatId, error);
         console.error("Mining monitor grouped notification send failed:", {
           chatId,
           wallets: batch.length,
@@ -6559,6 +6628,10 @@ async function runMiningSummaryPush(bot: Telegraf<any>, trigger = "auto") {
   });
 
   for (const [chatId] of grouped) {
+    if (isChatBlocked(chatId)) {
+      continue;
+    }
+
     try {
       await sendMessageWithOptionalHtml(
         bot,
@@ -6566,6 +6639,7 @@ async function runMiningSummaryPush(bot: Telegraf<any>, trigger = "auto") {
         buildMiningSummaryStatusMessage(chatId, { pushOnly: true }),
       );
     } catch (error) {
+      noteNotificationFailure(chatId, error);
       console.error("Mining summary push send failed:", {
         chatId,
         message: error instanceof Error ? error.message : String(error),
@@ -7115,6 +7189,10 @@ export async function startBot(botToken: string) {
     // Persistent bottom keyboard (the one behind the "Menü" button), not the
     // inline card: it stays put after every message, so the common actions are
     // always one tap away instead of being scrolled out of history.
+    // Someone who blocked the bot and later pressed /start is reachable
+    // again; clear the flag so scheduled pushes resume for them.
+    unmarkChatBlocked(from.id);
+
     await ctx.reply(buildWelcomeMessage(), buildMainKeyboard());
     await ctx.reply(buildHowToUseMessage());
 
@@ -7658,6 +7736,7 @@ export async function startBot(botToken: string) {
         sent += 1;
       } catch (error) {
         failed += 1;
+        noteNotificationFailure(chatId, error);
         console.error("Broadcast (all) send failed:", {
           chatId,
           hasPhoto: Boolean(photoUrl),
