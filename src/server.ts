@@ -5,7 +5,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { getAckiNetworkStats, getAckiWalletActivity } from "./services/ackiProvider";
-import { isAdminTestModeOn, setAdminTestMode } from "./bot";
+import { isAdminTestModeOn, setAdminTestMode, sendAdminNotification } from "./bot";
 import {
   collectReward as beeCollectReward,
   discardMiner as beeDiscardMiner,
@@ -2717,6 +2717,47 @@ app.use(express.static(path.join(process.cwd(), "public")));
     const on = req.body?.on === true;
     setAdminTestMode(req.telegramId, on);
     res.json({ ok: true, active: on });
+  });
+
+  // Revokes a subscription outright (as opposed to /grant, which only ever
+  // extends). Used by the panel's per-row "kaldir" button.
+  app.post("/api/admin/subscription/revoke", requireAdminAuth, (req: any, res) => {
+    const chatId = Number(req.body?.chatId);
+
+    if (!Number.isFinite(chatId)) {
+      res.status(400).json({ ok: false, error: "INVALID_INPUT" });
+      return;
+    }
+
+    const state = readPaymentsState();
+    const had = Boolean(state.subscriptions[String(chatId)]);
+    delete state.subscriptions[String(chatId)];
+    writePaymentsState(state);
+
+    console.log("Admin revoked subscription:", { byAdmin: req.telegramId, chatId, had });
+
+    res.json({ ok: true, revoked: had });
+  });
+
+  // Push a plain-text Telegram message to any chat id from the admin panel.
+  // Same bot the user already talks to \u2014 no separate messaging channel.
+  app.post("/api/admin/notify", requireAdminAuth, async (req: any, res) => {
+    const chatId = Number(req.body?.chatId);
+    const message = String(req.body?.message || "").trim();
+
+    if (!Number.isFinite(chatId) || !message) {
+      res.status(400).json({ ok: false, error: "INVALID_INPUT" });
+      return;
+    }
+
+    try {
+      await sendAdminNotification(chatId, message);
+      console.log("Admin sent notification:", { byAdmin: req.telegramId, chatId, length: message.length });
+      res.json({ ok: true });
+    } catch (error: any) {
+      console.error("Admin notification failed:", { chatId, message: error?.message });
+      res.status(502).json({ ok: false, error: "SEND_FAILED", detail: String(error?.message || error) });
+    }
   });
 
   app.get("/api/radar/wallet-count", (_req, res) => {

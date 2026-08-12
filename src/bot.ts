@@ -238,6 +238,21 @@ export function setAdminTestMode(chatId: number, on: boolean): void {
   console.log("Admin test mode:", { chatId, testMode: on });
 }
 
+// Set once startBot() has created the Telegraf instance, so the admin
+// panel (a completely separate HTTP surface) can push a message to any
+// chat without needing its own bot connection.
+let botInstance: import("telegraf").Telegraf<any> | null = null;
+
+export async function sendAdminNotification(
+  chatId: number,
+  message: string,
+): Promise<void> {
+  if (!botInstance) {
+    throw new Error("Bot not started yet");
+  }
+  await botInstance.telegram.sendMessage(chatId, message);
+}
+
 // Ignores the toggle. Used by /testmode itself and by the 1-star test plan, so
 // turning privileges off cannot strand the operator without a way back.
 function isRealAdminChatId(chatId: number): boolean {
@@ -7046,6 +7061,7 @@ async function replyMining(ctx: any) {
 
 export async function startBot(botToken: string) {
   const bot = new Telegraf(botToken);
+  botInstance = bot;
 
   // Fix: the bot was responding to every command — and the mining monitor
   // was sending reward notifications — inside any group/channel it got added
