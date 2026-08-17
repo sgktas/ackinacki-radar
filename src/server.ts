@@ -3981,6 +3981,8 @@ export function startServer(port: number) {
         sessionEpoch5mStart: miner.lastSessionEpoch5mStart ?? null,
         sessionEpochStatus: miner.lastSessionEpochStatus ?? null,
         claimedEpoch5mStart: miner.lastClaimedEpoch5mStart ?? null,
+        cycleEpochCount:
+          rewardCycleState.get(miner.walletName)?.count ?? 0,
         rewardLastChainReadAt: rewardLastChainReadAt.get(miner.walletName) ?? null,
       }));
 
