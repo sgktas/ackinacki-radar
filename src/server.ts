@@ -1868,6 +1868,14 @@ type DashboardMiningHealthStatus =
   | "critical"
   | "idle";
 
+type DashboardMiningHealthIssue =
+  | "producer_queue_congestion"
+  | "submission_proof_missing"
+  | "chain_confirmation_timeout"
+  | "session_rejected"
+  | "sdk_error"
+  | "claim_failed";
+
 function readBeeMiningHealth(minerIds: Set<string>) {
   const empty = {
     available: false,
@@ -1875,24 +1883,35 @@ function readBeeMiningHealth(minerIds: Set<string>) {
     scope: "cycle" as const,
     windowHours: null as number | null,
     total: 0,
+    confirmed: 0,
     healthy: 0,
     recovered: 0,
     pending: 0,
     lost: 0,
     claimIssues: 0,
     successRate: null as number | null,
+    primaryIssue: null as {
+      code: DashboardMiningHealthIssue;
+      count: number;
+    } | null,
+    issueCounts: {} as Partial<
+      Record<DashboardMiningHealthIssue, number>
+    >,
     latest: [] as Array<{
       at: string;
       minerId: string;
       walletName: string;
       epoch5mStart: string;
-      status: "healthy" | "recovered" | "lost";
+      status: "healthy" | "recovered" | "pending" | "lost";
+      issueCode: DashboardMiningHealthIssue | null;
       taps: number | null;
       tapDelta: number | null;
       retries: number;
       retryMode: string;
       settlement: string;
       rejected: boolean;
+      queueOverflowRetriesObserved: number;
+      queueOverflowExhaustedObserved: number;
       claim: "none" | "queued" | "failed" | "collected";
     }>,
   };
@@ -2097,6 +2116,9 @@ function readBeeMiningHealth(minerIds: Set<string>) {
     let pending = 0;
     let lost = 0;
 
+    const issueCounts =
+      new Map<DashboardMiningHealthIssue, number>();
+
     for (
       let index = 0;
       index < sessions.length;
@@ -2246,6 +2268,89 @@ function readBeeMiningHealth(minerIds: Set<string>) {
       session.__healthStatus =
         healthStatus;
 
+      const queueOverflowRetriesObserved =
+        Math.max(
+          0,
+          Number(
+            session.queueOverflowRetriesObserved ||
+            0,
+          ),
+        );
+
+      const queueOverflowExhaustedObserved =
+        Math.max(
+          0,
+          Number(
+            session.queueOverflowExhaustedObserved ||
+            0,
+          ),
+        );
+
+      const eventErrorText =
+        [
+          session.error,
+          ...(
+            Array.isArray(session.eventErrors)
+              ? session.eventErrors
+              : []
+          ),
+        ]
+          .filter(Boolean)
+          .join(" ");
+
+      let issueCode:
+        DashboardMiningHealthIssue | null =
+          null;
+
+      if (
+        healthStatus === "pending" ||
+        healthStatus === "lost"
+      ) {
+        if (
+          queueOverflowRetriesObserved > 0 ||
+          queueOverflowExhaustedObserved > 0 ||
+          /QUEUE_OVERFLOW|queue is full|message queue is full/i.test(
+            eventErrorText,
+          )
+        ) {
+          issueCode =
+            "producer_queue_congestion";
+        } else if (
+          session.sawSessionRejected === true
+        ) {
+          issueCode =
+            "session_rejected";
+        } else if (
+          String(session.settlement || "") ===
+          "sdk_error"
+        ) {
+          issueCode =
+            "sdk_error";
+        } else if (
+          session.sawSubmitProof !== true
+        ) {
+          issueCode =
+            "submission_proof_missing";
+        } else if (
+          String(session.settlement || "") ===
+          "timeout"
+        ) {
+          issueCode =
+            "chain_confirmation_timeout";
+        } else {
+          issueCode =
+            "sdk_error";
+        }
+
+        issueCounts.set(
+          issueCode,
+          (issueCounts.get(issueCode) || 0) + 1,
+        );
+      }
+
+      session.__issueCode =
+        issueCode;
+
       if (
         healthStatus ===
         "healthy"
@@ -2277,13 +2382,38 @@ function readBeeMiningHealth(minerIds: Set<string>) {
       }
     }
 
-    const total = healthy + recovered + lost;
+    if (claimIssues > 0) {
+      issueCounts.set(
+        "claim_failed",
+        claimIssues,
+      );
+    }
+
+    const confirmed = healthy + recovered;
+
+    const total =
+      confirmed + pending + lost;
 
     const successRate =
       total > 0
         ? Number(
-            (((healthy + recovered) / total) * 100).toFixed(2),
+            ((confirmed / total) * 100).toFixed(2),
           )
+        : null;
+
+    const primaryIssueEntry =
+      Array.from(issueCounts.entries())
+        .sort(
+          (left, right) =>
+            right[1] - left[1],
+        )[0];
+
+    const primaryIssue =
+      primaryIssueEntry
+        ? {
+            code: primaryIssueEntry[0],
+            count: primaryIssueEntry[1],
+          }
         : null;
 
     const finalizedSessions =
@@ -2318,11 +2448,6 @@ function readBeeMiningHealth(minerIds: Set<string>) {
         : "idle";
 
     const latest = sessions
-      .filter(
-        (session) =>
-          session.__healthStatus !==
-          "pending",
-      )
       .slice(-20)
       .reverse()
       .map((session) => {
@@ -2331,10 +2456,15 @@ function readBeeMiningHealth(minerIds: Set<string>) {
         const sessionStatus:
           | "healthy"
           | "recovered"
+          | "pending"
           | "lost" =
           session.__healthStatus ===
             "lost"
             ? "lost"
+            :
+          session.__healthStatus ===
+            "pending"
+            ? "pending"
             :
           session.__healthStatus ===
             "recovered"
@@ -2350,6 +2480,9 @@ function readBeeMiningHealth(minerIds: Set<string>) {
           walletName: String(session.walletName || ""),
           epoch5mStart: String(session.epoch5mStart || ""),
           status: sessionStatus,
+          issueCode:
+            session.__issueCode ||
+            null,
           taps:
             typeof session.taps === "number"
               ? session.taps
@@ -2362,6 +2495,22 @@ function readBeeMiningHealth(minerIds: Set<string>) {
           retryMode: String(session.retryMode || "none"),
           settlement: String(session.settlement || "unknown"),
           rejected: session.sawSessionRejected === true,
+          queueOverflowRetriesObserved:
+            Math.max(
+              0,
+              Number(
+                session.queueOverflowRetriesObserved ||
+                0,
+              ),
+            ),
+          queueOverflowExhaustedObserved:
+            Math.max(
+              0,
+              Number(
+                session.queueOverflowExhaustedObserved ||
+                0,
+              ),
+            ),
           claim: claims.get(key) || "none",
         };
       });
@@ -2372,12 +2521,18 @@ function readBeeMiningHealth(minerIds: Set<string>) {
       scope: "cycle" as const,
       windowHours: null,
       total,
+      confirmed,
       healthy,
       recovered,
       pending,
       lost,
       claimIssues,
       successRate,
+      primaryIssue,
+      issueCounts:
+        Object.fromEntries(
+          issueCounts.entries(),
+        ),
       latest,
     };
   } catch (error) {
