@@ -527,6 +527,16 @@ function startTpsSampler() {
         }
       } else {
         chainStatsLastBlockedByBee = true;
+        // The normal one-minute tick may land just before the five-minute
+        // boundary. Wake again at the exact boundary instead of slipping the
+        // real request into the sixth minute.
+        targetIntervalMs = Math.min(
+          targetIntervalMs,
+          Math.max(
+            1000,
+            criticalRefreshAnchorMs + TPS_BEE_CRITICAL_REFRESH_MS - startedAt,
+          ),
+        );
       }
     } catch (error) {
       chainStatsConsecutiveFailures += 1;
