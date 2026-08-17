@@ -1,5 +1,9 @@
 const ACKI_MAINNET_GRAPHQL_URL =
   process.env.ACKI_MAINNET_GRAPHQL_URL || "https://mainnet.ackinacki.org/graphql";
+const ackiGraphqlTimeoutFromEnv = Number(process.env.ACKI_GRAPHQL_TIMEOUT_MS || 12_000);
+const ACKI_GRAPHQL_TIMEOUT_MS = Number.isFinite(ackiGraphqlTimeoutFromEnv)
+  ? Math.min(60_000, Math.max(2_000, ackiGraphqlTimeoutFromEnv))
+  : 12_000;
 // Fix: mininghub.ackinacki.com removed as a data source.
 
 const ACCOUNT_HEX_PATTERN = /^[a-fA-F0-9]{64}$/;
@@ -560,16 +564,27 @@ async function getAckiMiningStats(_walletName: string | null): Promise<AckiMinin
 }
 
 async function postAckiGraphql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
-  const response = await fetch(ACKI_MAINNET_GRAPHQL_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      query,
-      variables,
-    }),
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(ACKI_MAINNET_GRAPHQL_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        query,
+        variables,
+      }),
+      signal: AbortSignal.timeout(ACKI_GRAPHQL_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
+      throw new Error(`Acki mainnet GraphQL timed out after ${ACKI_GRAPHQL_TIMEOUT_MS}ms`);
+    }
+
+    throw error;
+  }
 
   if (!response.ok) {
     throw new Error("Acki mainnet GraphQL request failed: " + response.status);

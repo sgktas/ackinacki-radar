@@ -490,20 +490,17 @@ function getTpsHistorySummary() {
   };
 }
 
-// Self-correcting cadence: schedule the next run from the wall clock, not from
-// "now + interval" after the work finished. A slow mainnet round must not push
-// every later sample further out (that drift compounds — learned the hard way
-// on the mining monitor).
+// One owner for the expensive blocks(last:300) read. Successful reads keep the
+// normal one-minute cadence; transient GraphQL failures back off instead of
+// adding more pressure to an already exhausted public connection pool.
 function startTpsSampler() {
   const FIRST_DELAY_MS = 5000;
-
-  // nextAt must track when the FIRST tick actually runs. Seeding it with
-  // now + INTERVAL while the first tick fires after FIRST_DELAY made the
-  // second sample land a full interval late (~115s instead of 60s) before
-  // the cadence settled.
-  let nextAt = Date.now() + FIRST_DELAY_MS;
+  const MAX_FAILURE_BACKOFF_MS = 5 * 60 * 1000;
 
   const tick = async () => {
+    const startedAt = Date.now();
+    let targetIntervalMs = TPS_SAMPLE_INTERVAL_MS;
+
     try {
       if (!isBeeChainCritical()) {
         const stats = await getAckiNetworkStats();
@@ -511,31 +508,46 @@ function startTpsSampler() {
         // This sampler is the single owner of the expensive network-stats read.
         // Public HTTP traffic must consume this snapshot instead of triggering
         // its own blocks(last:300) GraphQL query.
-        lastGoodChainStats = { data: stats, atMs: Date.now() };
+        storeChainStatsSnapshot(stats);
+        chainStatsConsecutiveFailures = 0;
 
         if (stats && typeof stats.tps === "number") {
           recordTpsSample(stats.tps);
         }
       }
     } catch (error) {
-      // A missed sample is fine; the windows are averages over many.
+      chainStatsConsecutiveFailures += 1;
+      const exponent = Math.min(3, Math.max(0, chainStatsConsecutiveFailures - 1));
+      const baseBackoffMs = Math.min(
+        MAX_FAILURE_BACKOFF_MS,
+        TPS_SAMPLE_INTERVAL_MS * 2 ** exponent,
+      );
+      // Small jitter prevents this process from repeatedly landing on the same
+      // busy boundary as other public-index consumers.
+      targetIntervalMs = Math.round(baseBackoffMs * (0.9 + Math.random() * 0.2));
+
+      if (chainStatsConsecutiveFailures === 1 || chainStatsConsecutiveFailures % 3 === 0) {
+        console.warn("TPS sampler GraphQL backoff:", {
+          failures: chainStatsConsecutiveFailures,
+          retrySeconds: Math.round(targetIntervalMs / 1000),
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
-    nextAt += TPS_SAMPLE_INTERVAL_MS;
-    let delay = nextAt - Date.now();
-
-    // Fell behind (slow mainnet, suspended process): resync to the next slot
-    // instead of firing a burst of catch-up ticks.
-    if (delay < 1000) {
-      nextAt = Date.now() + TPS_SAMPLE_INTERVAL_MS;
-      delay = TPS_SAMPLE_INTERVAL_MS;
-    }
-
+    const elapsedMs = Date.now() - startedAt;
+    const delay = Math.max(1000, targetIntervalMs - elapsedMs);
+    chainStatsNextAttemptAtMs = Date.now() + delay;
     setTimeout(tick, delay);
   };
 
+  chainStatsNextAttemptAtMs = Date.now() + FIRST_DELAY_MS;
   setTimeout(tick, FIRST_DELAY_MS);
-  console.log("TPS sampler started:", { intervalSeconds: TPS_SAMPLE_INTERVAL_MS / 1000 });
+  console.log("TPS sampler started:", {
+    intervalSeconds: TPS_SAMPLE_INTERVAL_MS / 1000,
+    maxBackoffSeconds: MAX_FAILURE_BACKOFF_MS / 1000,
+    restoredSnapshot: Boolean(lastGoodChainStats),
+  });
 }
 
 function getMiningMonitorWalletCount(): number {
@@ -1014,11 +1026,55 @@ const BEE_CYCLE_TAP_CAP = Number(process.env.BEE_CYCLE_TAP_CAP || 12000);
 // extra currency (`balance_other`, currency id 1) on the wallet's popitGame
 // account. So sample that total on a tight cadence and difference it; each
 // positive step is one reward.
-// Last successful chain reading, kept so a failed poll degrades to "slightly
-// old" instead of "gone". Ten minutes is well past the point where the numbers
-// stop being interesting, so beyond it the tiles go empty as before.
-const CHAIN_STATS_MAX_STALE_MS = 10 * 60 * 1000;
-let lastGoodChainStats: { data: any; atMs: number } | null = null;
+// The public block index is a shared, capacity-limited service. Keep one
+// durable snapshot so a GraphQL pool timeout or an app restart degrades to an
+// explicitly stale reading instead of blank tiles and a false "synchronised"
+// state. A day-old snapshot is no longer useful enough to render.
+const CHAIN_STATS_WARN_STALE_MS = 75 * 1000;
+const CHAIN_STATS_MAX_SERVE_MS = 24 * 60 * 60 * 1000;
+const chainStatsSnapshotFile = path.join(dataDir, "chain-stats-snapshot.json");
+
+type ChainStatsSnapshot = { data: any; atMs: number };
+
+function readChainStatsSnapshot(): ChainStatsSnapshot | null {
+  try {
+    if (!fs.existsSync(chainStatsSnapshotFile)) return null;
+    const parsed = JSON.parse(fs.readFileSync(chainStatsSnapshotFile, "utf-8"));
+    const atMs = Number(parsed?.atMs);
+    const latestBlock = Number(parsed?.data?.latestBlock);
+
+    if (
+      !Number.isFinite(atMs) ||
+      atMs <= 0 ||
+      !Number.isFinite(latestBlock) ||
+      latestBlock <= 0
+    ) {
+      return null;
+    }
+
+    return { data: parsed.data, atMs };
+  } catch {
+    return null;
+  }
+}
+
+function storeChainStatsSnapshot(data: any): void {
+  const snapshot: ChainStatsSnapshot = { data, atMs: Date.now() };
+  lastGoodChainStats = snapshot;
+
+  try {
+    ensureStorage();
+    const temporaryFile = `${chainStatsSnapshotFile}.tmp`;
+    fs.writeFileSync(temporaryFile, JSON.stringify(snapshot), "utf-8");
+    fs.renameSync(temporaryFile, chainStatsSnapshotFile);
+  } catch (error) {
+    console.error("Chain stats snapshot write failed:", error);
+  }
+}
+
+let lastGoodChainStats: ChainStatsSnapshot | null = readChainStatsSnapshot();
+let chainStatsConsecutiveFailures = 0;
+let chainStatsNextAttemptAtMs: number | null = null;
 
 // The dashboard calls the feed stale past 60s, so force a read before that.
 const REWARD_FEED_FORCE_READ_AFTER_MS = 45 * 1000;
@@ -3262,12 +3318,12 @@ export function startServer(port: number) {
   const MINER_CYCLE_BLOCK_PERIOD =
     262_000;
 
+  // Normal operation consumes the central radar snapshot below. This fallback
+  // is only for a first boot where no in-memory or durable snapshot exists yet.
   const MINER_CYCLE_GRAPHQL_URL =
     process.env.ACKI_MAINNET_GRAPHQL_URL ||
     "https://mainnet.ackinacki.org/graphql";
-
-  const MINER_CYCLE_CACHE_MS =
-    15_000;
+  const MINER_CYCLE_CACHE_MS = 60_000;
 
   // Bootstrap comes from the live chain measurement made on
   // 2026-08-14:
@@ -3282,23 +3338,19 @@ export function startServer(port: number) {
     "bootstrap" | "live" =
     "bootstrap";
 
-  let minerCycleLastSample: {
+  type MinerCycleSample = {
     seqNo: number;
     chainTimestamp: number;
     fetchedAtMs: number;
-  } | null = null;
+  };
 
-  let minerCycleFetchInFlight:
-    Promise<any> | null =
-    null;
+  let minerCycleLastSample: MinerCycleSample | null = null;
+  let minerCycleFetchInFlight: Promise<any> | null = null;
+  let minerCycleFallbackNextAttemptAtMs = 0;
 
 
   function buildMinerCycleClock(
-    sample: {
-      seqNo: number;
-      chainTimestamp: number;
-      fetchedAtMs: number;
-    },
+    sample: MinerCycleSample,
     stale: boolean,
   ) {
 
@@ -3448,6 +3500,46 @@ export function startServer(port: number) {
     const now =
       Date.now();
 
+    // Reuse the central blocks(last:300) result. The old implementation made
+    // a second blocks(last:1) request as often as every 15 seconds, competing
+    // with the radar sampler and Bee for the same exhausted block-index pool.
+    const sharedSnapshot = lastGoodChainStats;
+    const sharedSeqNo = Number(sharedSnapshot?.data?.latestBlock);
+    const sharedChainTimestamp = Number(sharedSnapshot?.data?.latestBlockTime);
+
+    if (
+      sharedSnapshot &&
+      Number.isFinite(sharedSeqNo) &&
+      sharedSeqNo > 0 &&
+      Number.isFinite(sharedChainTimestamp) &&
+      sharedChainTimestamp > 0
+    ) {
+      const fresh: MinerCycleSample = {
+        seqNo: Math.floor(sharedSeqNo),
+        chainTimestamp: Math.floor(sharedChainTimestamp),
+        fetchedAtMs: sharedSnapshot.atMs,
+      };
+
+      if (!minerCycleLastSample || fresh.seqNo > minerCycleLastSample.seqNo) {
+        const sharedRate = Number(sharedSnapshot.data?.blocksPerSecond);
+
+        if (sharedRate >= 1 && sharedRate <= 5) {
+          minerCycleRateBps =
+            minerCycleRateSource === "bootstrap"
+              ? sharedRate
+              : minerCycleRateBps * 0.65 + sharedRate * 0.35;
+          minerCycleRateSource = "live";
+        }
+
+        minerCycleLastSample = fresh;
+      }
+
+      return buildMinerCycleClock(
+        minerCycleLastSample || fresh,
+        now - sharedSnapshot.atMs > CHAIN_STATS_WARN_STALE_MS,
+      );
+    }
+
     if (
       minerCycleLastSample &&
       now -
@@ -3463,6 +3555,12 @@ export function startServer(port: number) {
     if (minerCycleFetchInFlight) {
       return minerCycleFetchInFlight;
     }
+
+    if (now < minerCycleFallbackNextAttemptAtMs) {
+      throw new Error("CHAIN_CLOCK_FALLBACK_BACKOFF");
+    }
+
+    minerCycleFallbackNextAttemptAtMs = now + MINER_CYCLE_CACHE_MS;
 
     minerCycleFetchInFlight =
       (async () => {
@@ -4717,14 +4815,10 @@ export function startServer(port: number) {
     if (lastGoodChainStats) {
       const ageMs = Date.now() - lastGoodChainStats.atMs;
       chainAgeSeconds = Math.round(ageMs / 1000);
+      chainStale = ageMs > CHAIN_STATS_WARN_STALE_MS;
 
-      if (ageMs <= CHAIN_STATS_MAX_STALE_MS) {
+      if (ageMs <= CHAIN_STATS_MAX_SERVE_MS) {
         chain = lastGoodChainStats.data;
-
-        // Normal sampler cadence is 60s. Mark data stale only when it is
-        // meaningfully older than one cadence, while still serving it for the
-        // existing 10-minute stale window.
-        chainStale = ageMs > TPS_SAMPLE_INTERVAL_MS + 15_000;
       }
     }
 
@@ -4733,6 +4827,13 @@ export function startServer(port: number) {
       chain,
       chainStale,
       chainAgeSeconds,
+      chainFlow: {
+        consecutiveFailures: chainStatsConsecutiveFailures,
+        nextAttemptAt:
+          chainStatsNextAttemptAtMs === null
+            ? null
+            : new Date(chainStatsNextAttemptAtMs).toISOString(),
+      },
       mining,
       tpsHistory: getTpsHistorySummary(),
     });
@@ -4997,7 +5098,8 @@ app.get("/api/acki/network", (_req, res) => {
     ok: true,
     network: snapshot.data,
     cached: true,
-    stale: ageMs > CHAIN_STATS_MAX_STALE_MS,
+    stale: ageMs > CHAIN_STATS_WARN_STALE_MS,
+    expired: ageMs > CHAIN_STATS_MAX_SERVE_MS,
     ageSeconds: Math.round(ageMs / 1000),
   });
 });
