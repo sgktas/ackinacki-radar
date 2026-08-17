@@ -337,6 +337,7 @@ type TpsHistory = { samples: TpsSample[]; hourly: TpsHourly[] };
 
 const tpsHistoryFile = path.join(process.cwd(), "data", "tps-history.json");
 const TPS_SAMPLE_INTERVAL_MS = 60 * 1000;
+const TPS_BEE_CRITICAL_REFRESH_MS = 5 * 60 * 1000;
 const TPS_RAW_RETENTION_MS = 24 * 60 * 60 * 1000;
 const TPS_HOURLY_RETENTION_HOURS = 30 * 24;
 
@@ -500,9 +501,19 @@ function startTpsSampler() {
   const tick = async () => {
     const startedAt = Date.now();
     let targetIntervalMs = TPS_SAMPLE_INTERVAL_MS;
+    const beeCritical = isBeeChainCritical();
+    const criticalRefreshAnchorMs = Math.max(
+      lastGoodChainStats?.atMs || 0,
+      chainStatsLastAttemptAtMs || 0,
+    );
+    const criticalRefreshDue =
+      !criticalRefreshAnchorMs ||
+      startedAt - criticalRefreshAnchorMs >= TPS_BEE_CRITICAL_REFRESH_MS;
 
     try {
-      if (!isBeeChainCritical()) {
+      if (!beeCritical || criticalRefreshDue) {
+        chainStatsLastAttemptAtMs = startedAt;
+        chainStatsLastBlockedByBee = false;
         const stats = await getAckiNetworkStats();
 
         // This sampler is the single owner of the expensive network-stats read.
@@ -514,6 +525,8 @@ function startTpsSampler() {
         if (stats && typeof stats.tps === "number") {
           recordTpsSample(stats.tps);
         }
+      } else {
+        chainStatsLastBlockedByBee = true;
       }
     } catch (error) {
       chainStatsConsecutiveFailures += 1;
@@ -546,6 +559,7 @@ function startTpsSampler() {
   console.log("TPS sampler started:", {
     intervalSeconds: TPS_SAMPLE_INTERVAL_MS / 1000,
     maxBackoffSeconds: MAX_FAILURE_BACKOFF_MS / 1000,
+    beeCriticalRefreshSeconds: TPS_BEE_CRITICAL_REFRESH_MS / 1000,
     restoredSnapshot: Boolean(lastGoodChainStats),
   });
 }
@@ -1075,6 +1089,8 @@ function storeChainStatsSnapshot(data: any): void {
 let lastGoodChainStats: ChainStatsSnapshot | null = readChainStatsSnapshot();
 let chainStatsConsecutiveFailures = 0;
 let chainStatsNextAttemptAtMs: number | null = null;
+let chainStatsLastAttemptAtMs: number | null = null;
+let chainStatsLastBlockedByBee = false;
 
 // The dashboard calls the feed stale past 60s, so force a read before that.
 const REWARD_FEED_FORCE_READ_AFTER_MS = 45 * 1000;
@@ -4829,6 +4845,20 @@ export function startServer(port: number) {
       chainAgeSeconds,
       chainFlow: {
         consecutiveFailures: chainStatsConsecutiveFailures,
+        beeCritical: isBeeChainCritical(),
+        blockedByBee: chainStatsLastBlockedByBee,
+        criticalRefreshSeconds: TPS_BEE_CRITICAL_REFRESH_MS / 1000,
+        lastAttemptAt:
+          chainStatsLastAttemptAtMs === null
+            ? null
+            : new Date(chainStatsLastAttemptAtMs).toISOString(),
+        criticalRefreshDueAt:
+          Math.max(lastGoodChainStats?.atMs || 0, chainStatsLastAttemptAtMs || 0) > 0
+            ? new Date(
+                Math.max(lastGoodChainStats?.atMs || 0, chainStatsLastAttemptAtMs || 0) +
+                  TPS_BEE_CRITICAL_REFRESH_MS,
+              ).toISOString()
+            : null,
         nextAttemptAt:
           chainStatsNextAttemptAtMs === null
             ? null
