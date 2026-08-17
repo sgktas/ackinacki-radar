@@ -337,7 +337,7 @@ type TpsHistory = { samples: TpsSample[]; hourly: TpsHourly[] };
 
 const tpsHistoryFile = path.join(process.cwd(), "data", "tps-history.json");
 const TPS_SAMPLE_INTERVAL_MS = 60 * 1000;
-const TPS_BEE_CRITICAL_REFRESH_MS = 2 * 60 * 1000;
+const TPS_BEE_CRITICAL_REFRESH_MS = 60 * 1000;
 const TPS_RAW_RETENTION_MS = 24 * 60 * 60 * 1000;
 const TPS_HOURLY_RETENTION_HOURS = 30 * 24;
 
@@ -496,7 +496,7 @@ function getTpsHistorySummary() {
 // adding more pressure to an already exhausted public connection pool.
 function startTpsSampler() {
   const FIRST_DELAY_MS = 5000;
-  const MAX_FAILURE_BACKOFF_MS = 2 * 60 * 1000;
+  const MAX_FAILURE_BACKOFF_MS = 60 * 1000;
 
   const tick = async () => {
     const startedAt = Date.now();
@@ -527,7 +527,7 @@ function startTpsSampler() {
         }
       } else {
         chainStatsLastBlockedByBee = true;
-        // The normal one-minute tick may land just before the two-minute
+        // The normal tick may land just before the one-minute
         // boundary. Wake again at the exact boundary instead of slipping the
         // real request into the following minute.
         targetIntervalMs = Math.min(
