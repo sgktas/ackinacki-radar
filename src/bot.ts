@@ -610,6 +610,38 @@ type PaymentsState = {
   // Highest TON logical time already processed. `lt` is monotonic per account,
   // so it is a reliable cursor: everything at or below it has been handled.
   tonLastLt?: number;
+
+  // REFERRAL QUALIFICATION STEP3
+  referralProfiles?: Record<
+    string,
+    {
+      code: string;
+      createdAt: string;
+    }
+  >;
+
+  referrals?: Record<
+    string,
+    {
+      referredChatId: number;
+      referrerChatId: number;
+      code: string;
+      boundAt: string;
+      qualifiedAt?: string | null;
+      qualifiedPlanId?: string | null;
+      paymentSource?: string | null;
+    }
+  >;
+
+  referralRewards?: Array<{
+    id?: string;
+    referrerChatId: number;
+    threshold: number;
+    daysAdded: number;
+    totalRewardDays: number;
+    triggeredByChatId?: number;
+    at: string;
+  }>;
 };
 
 // Local alias so this file doesn't need a type-only import cycle concern —
@@ -633,6 +665,9 @@ function readPaymentsState(): PaymentsState {
   const parsed = JSON.parse(raw);
 
   return {
+    // Preserve referral metadata and any future state fields owned by the
+    // dashboard/API when the payment bot writes payments.json.
+    ...parsed,
     lastCheckedBalanceRaw: parsed?.lastCheckedBalanceRaw ?? null,
     pendingInvoices: Array.isArray(parsed?.pendingInvoices) ? parsed.pendingInvoices : [],
     subscriptions: parsed?.subscriptions && typeof parsed.subscriptions === "object"
@@ -678,7 +713,11 @@ function grantSubscription(
   chatId: number,
   planId: PlanId2,
   days: number,
-  options: { trial?: boolean } = {},
+  options: {
+    trial?: boolean;
+    paid?: boolean;
+    paymentSource?: string;
+  } = {},
 ): string {
   const now = Date.now();
   const existing = state.subscriptions[String(chatId)];
@@ -694,8 +733,278 @@ function grantSubscription(
     ...(options.trial ? { trial: true } : {}),
   };
 
+  // Trial and the admin-only 1-star test plan never qualify a referral.
+  if (
+    options.paid &&
+    planId !== "test"
+  ) {
+    qualifyReferralForPaidSubscription(
+      state,
+      chatId,
+      planId,
+      options.paymentSource || "paid",
+    );
+  }
+
   return activeUntil;
 }
+
+
+const REFERRAL_REWARD_MILESTONES = [
+  {
+    count: 1,
+    addDays: 15,
+    totalDays: 15,
+  },
+  {
+    count: 3,
+    addDays: 15,
+    totalDays: 30,
+  },
+  {
+    count: 9,
+    addDays: 60,
+    totalDays: 90,
+  },
+] as const;
+
+
+function qualifyReferralForPaidSubscription(
+  state: PaymentsState,
+  paidChatId: number,
+  paidPlanId: PlanId2,
+  paymentSource: string,
+): void {
+  const referrals =
+    state.referrals &&
+    typeof state.referrals === "object"
+      ? state.referrals
+      : {};
+
+  const binding =
+    referrals[String(paidChatId)];
+
+  // No referral, already qualified, or impossible self-referral.
+  if (
+    !binding ||
+    binding.qualifiedAt ||
+    Number(binding.referrerChatId) ===
+      paidChatId
+  ) {
+    return;
+  }
+
+  const referrerChatId =
+    Number(binding.referrerChatId);
+
+  if (
+    !Number.isSafeInteger(
+      referrerChatId,
+    ) ||
+    referrerChatId <= 0
+  ) {
+    console.error(
+      "Referral qualification skipped: invalid referrer id",
+      {
+        paidChatId,
+        referrerChatId,
+      },
+    );
+
+    return;
+  }
+
+  const now =
+    Date.now();
+
+  const nowIso =
+    new Date(now)
+      .toISOString();
+
+  // The referred account qualifies exactly once.
+  binding.qualifiedAt =
+    nowIso;
+
+  binding.qualifiedPlanId =
+    paidPlanId;
+
+  binding.paymentSource =
+    paymentSource;
+
+  state.referrals =
+    referrals;
+
+  const qualifiedCount =
+    Object.values(
+      referrals,
+    ).filter(
+      (item) =>
+        item &&
+        Number(
+          item.referrerChatId,
+        ) === referrerChatId &&
+        Boolean(
+          item.qualifiedAt,
+        ),
+    ).length;
+
+  const rewards =
+    Array.isArray(
+      state.referralRewards,
+    )
+      ? [
+          ...state.referralRewards,
+        ]
+      : [];
+
+  const rewardedThresholds =
+    new Set(
+      rewards
+        .filter(
+          (item) =>
+            Number(
+              item.referrerChatId,
+            ) === referrerChatId,
+        )
+        .map(
+          (item) =>
+            Number(
+              item.threshold,
+            ),
+        ),
+    );
+
+
+  for (
+    const milestone
+    of REFERRAL_REWARD_MILESTONES
+  ) {
+    if (
+      qualifiedCount <
+        milestone.count ||
+      rewardedThresholds.has(
+        milestone.count,
+      )
+    ) {
+      continue;
+    }
+
+    const referrerKey =
+      String(
+        referrerChatId,
+      );
+
+    const existing =
+      state.subscriptions[
+        referrerKey
+      ];
+
+    const existingExpiry =
+      existing
+        ? new Date(
+            existing.activeUntil,
+          ).getTime()
+        : NaN;
+
+    const base =
+      Number.isFinite(
+        existingExpiry,
+      ) &&
+      existingExpiry > now
+        ? existingExpiry
+        : now;
+
+    // Preserve a real paid tier.
+    // If the account currently has TEST/no plan, referral rewards begin
+    // as Standard subscription time.
+    const rewardPlanId: PlanId2 =
+      existing?.planId === "standard" ||
+      existing?.planId === "max" ||
+      existing?.planId === "super"
+        ? existing.planId
+        : "standard";
+
+    const activeUntil =
+      new Date(
+        base +
+          milestone.addDays *
+            24 *
+            60 *
+            60 *
+            1000,
+      ).toISOString();
+
+    state.subscriptions[
+      referrerKey
+    ] = {
+      planId:
+        rewardPlanId,
+
+      activeUntil,
+    };
+
+    rewards.push({
+      id:
+        `ref:${referrerChatId}:` +
+        `${milestone.count}:` +
+        `${paidChatId}`,
+
+      referrerChatId,
+
+      threshold:
+        milestone.count,
+
+      daysAdded:
+        milestone.addDays,
+
+      totalRewardDays:
+        milestone.totalDays,
+
+      triggeredByChatId:
+        paidChatId,
+
+      at:
+        nowIso,
+    });
+
+    rewardedThresholds.add(
+      milestone.count,
+    );
+
+    console.log(
+      "Referral reward granted:",
+      {
+        referrerChatId,
+        paidChatId,
+        qualifiedCount,
+        threshold:
+          milestone.count,
+        daysAdded:
+          milestone.addDays,
+        totalRewardDays:
+          milestone.totalDays,
+        planId:
+          rewardPlanId,
+        activeUntil,
+      },
+    );
+  }
+
+  state.referralRewards =
+    rewards.slice(-1000);
+
+  console.log(
+    "Referral qualified:",
+    {
+      paidChatId,
+      referrerChatId,
+      paidPlanId,
+      paymentSource,
+      qualifiedCount,
+    },
+  );
+}
+
 
 function writePaymentsState(state: PaymentsState) {
   ensureStorage();
@@ -3361,7 +3670,7 @@ async function updateMiningWatchRecord(
   const now = new Date().toISOString();
 
   try {
-    const wallet = await getAckiPopitGameActivity(watch.input || watch.address);
+    const wallet = await getAckiPopitGameActivity(watch.address || watch.input);
     const lockedRaw = getLockedNacklRawForMonitor(wallet);
     const currentSourceKey = getPopitMonitorSourceKey(wallet, lockedRaw);
     const currentTransactionLt = getPopitLastTransactionLt(wallet);
@@ -5953,21 +6262,20 @@ async function runTonPaymentsCheckTick(bot: Telegraf<any>) {
         continue;
       }
 
-      // Extend from the later of now and any existing expiry, so buying early
-      // adds time instead of throwing the remainder away.
-      const existing = state.subscriptions[String(invoice.chatId)];
-      const base =
-        existing && new Date(existing.activeUntil).getTime() > now
-          ? new Date(existing.activeUntil).getTime()
-          : now;
-      const activeUntil = new Date(
-        base + plan.days * 24 * 60 * 60 * 1000,
-      ).toISOString();
-
-      state.subscriptions[String(invoice.chatId)] = {
-        planId: plan.id,
-        activeUntil,
-      };
+      const activeUntil = grantSubscription(
+        state,
+        invoice.chatId,
+        plan.id,
+        plan.days,
+        {
+          paid: true,
+          paymentSource:
+            String(
+              transfer.currency ||
+              "ton",
+            ),
+        },
+      );
       state.pendingInvoices = state.pendingInvoices.filter(
         (item) => item.id !== invoice.id,
       );
@@ -6068,6 +6376,21 @@ async function runNacklPaymentsCheckTick(bot: Telegraf<any>) {
   nacklPaymentsRunning = true;
 
   try {
+    // Once the initial baseline exists, there is nothing useful to observe
+    // when nobody has an active NACKL invoice. Keep the scheduler alive, but
+    // make idle ticks local-only instead of hitting the chain every 45 seconds.
+    const idleSnapshot = readPaymentsState();
+    const idleNow = Date.now();
+    const hasActiveNacklInvoice = (idleSnapshot.pendingInvoices || []).some(
+      (invoice) =>
+        invoice.currency === "nackl" &&
+        new Date(invoice.expiresAt).getTime() > idleNow,
+    );
+
+    if (idleSnapshot.nacklBaselineReady && !hasActiveNacklInvoice) {
+      return;
+    }
+
     // Cheap change detector: account.info.last_trans_lt is served by the
     // lightweight account path. Only hit the expensive messages index when
     // the payments wallet actually changed.
@@ -6165,6 +6488,10 @@ async function runNacklPaymentsCheckTick(bot: Telegraf<any>) {
         invoice.chatId,
         plan.id,
         plan.days,
+        {
+          paid: true,
+          paymentSource: "nackl",
+        },
       );
       state.pendingInvoices = state.pendingInvoices.filter(
         (item) => item.id !== invoice.id,
@@ -6382,14 +6709,16 @@ async function runPaymentsCheckTickSenderBased(
     const plan = getPlanById(matchedInvoice.planId);
     if (!plan) continue;
 
-    const existing = state.subscriptions[String(chatId)];
-    const base =
-      existing && new Date(existing.activeUntil).getTime() > now
-        ? new Date(existing.activeUntil).getTime()
-        : now;
-    const activeUntil = new Date(base + plan.days * 24 * 60 * 60 * 1000).toISOString();
-
-    state.subscriptions[String(chatId)] = { planId: plan.id, activeUntil };
+    const activeUntil = grantSubscription(
+      state,
+      chatId,
+      plan.id,
+      plan.days,
+      {
+        paid: true,
+        paymentSource: "shell",
+      },
+    );
     state.pendingInvoices = state.pendingInvoices.filter(
       (item) => item.id !== matchedInvoice.id,
     );
@@ -6480,19 +6809,16 @@ async function runPaymentsCheckTickBalanceDiff(
 
         if (!plan) continue;
 
-        const existing = state.subscriptions[String(invoice.chatId)];
-        const base =
-          existing && new Date(existing.activeUntil).getTime() > now
-            ? new Date(existing.activeUntil).getTime()
-            : now;
-        const activeUntil = new Date(
-          base + plan.days * 24 * 60 * 60 * 1000,
-        ).toISOString();
-
-        state.subscriptions[String(invoice.chatId)] = {
-          planId: plan.id,
-          activeUntil,
-        };
+        const activeUntil = grantSubscription(
+          state,
+          invoice.chatId,
+          plan.id,
+          plan.days,
+          {
+            paid: true,
+            paymentSource: "shell",
+          },
+        );
 
         state.pendingInvoices = state.pendingInvoices.filter(
           (item) => item.id !== invoice.id,
@@ -7312,16 +7638,69 @@ export async function startBot(botToken: string) {
     }
   });
 
-  // Telegram asks for a final go-ahead before charging. Answering false here
-  // cancels the payment, so only refuse for a reason we can state.
-  bot.on("pre_checkout_query", async (ctx) => {
-    const payload = String((ctx as any).preCheckoutQuery?.invoice_payload || "");
-    const planId = payload.split(":")[1] || "";
+  // Telegram Stars invoice payloads are bound to the account that created
+  // them. Validate that binding plus the exact currency/amount before Telegram
+  // is allowed to charge the user.
+  function parseStarsInvoicePayload(payloadValue: unknown) {
+    const parts = String(payloadValue || "").split(":");
 
-    // resolvePaidPlan, not getPlanById: the test plan lives outside PLANS, and
-    // rejecting it here would cancel a payment we deliberately issued.
-    if (!resolvePaidPlan(planId)) {
-      await ctx.answerPreCheckoutQuery(false, "Plan not found, please try again.");
+    if (parts.length !== 3 || parts[0] !== "plan") {
+      return null;
+    }
+
+    const plan = resolvePaidPlan(parts[1] || "");
+    const intendedChatId = Number(parts[2]);
+
+    if (
+      !plan ||
+      !Number.isSafeInteger(intendedChatId) ||
+      intendedChatId <= 0
+    ) {
+      return null;
+    }
+
+    return { plan, intendedChatId };
+  }
+
+  bot.on("pre_checkout_query", async (ctx) => {
+    const query = (ctx as any).preCheckoutQuery;
+    const parsed = parseStarsInvoicePayload(query?.invoice_payload);
+    const payerId = Number(query?.from?.id ?? ctx.from?.id ?? 0);
+
+    if (
+      !parsed ||
+      !Number.isSafeInteger(payerId) ||
+      parsed.intendedChatId !== payerId
+    ) {
+      console.warn("Stars pre-checkout account mismatch:", {
+        payerId,
+        payload: query?.invoice_payload,
+      });
+
+      await ctx.answerPreCheckoutQuery(
+        false,
+        "This invoice belongs to another account. Please create a new invoice.",
+      );
+      return;
+    }
+
+    const expectedStars = getPlanStars(parsed.plan);
+    const currency = String(query?.currency || "");
+    const totalAmount = Number(query?.total_amount);
+
+    if (currency !== "XTR" || totalAmount !== expectedStars) {
+      console.warn("Stars pre-checkout amount mismatch:", {
+        chatId: payerId,
+        plan: parsed.plan.id,
+        currency,
+        totalAmount,
+        expectedStars,
+      });
+
+      await ctx.answerPreCheckoutQuery(
+        false,
+        "This invoice is no longer valid. Please create a new invoice.",
+      );
       return;
     }
 
@@ -7334,13 +7713,35 @@ export async function startBot(botToken: string) {
     const payment = (ctx.message as any).successful_payment;
     const chatId = ctx.chat?.id;
     const chargeId = String(payment.telegram_payment_charge_id || "");
-    const planId = String(payment.invoice_payload || "").split(":")[1] || "";
-    const plan = resolvePaidPlan(planId);
+    const parsed = parseStarsInvoicePayload(payment.invoice_payload);
 
-    if (!chatId || !plan) {
-      console.error("Stars payment with unusable payload:", {
+    if (
+      !chatId ||
+      !parsed ||
+      parsed.intendedChatId !== chatId ||
+      !chargeId
+    ) {
+      console.error("Stars payment with unusable identity/payload:", {
         chatId,
         payload: payment.invoice_payload,
+        chargeIdPresent: Boolean(chargeId),
+      });
+      return;
+    }
+
+    const plan = parsed.plan;
+    const expectedStars = getPlanStars(plan);
+    const currency = String(payment.currency || "");
+    const totalAmount = Number(payment.total_amount);
+
+    if (currency !== "XTR" || totalAmount !== expectedStars) {
+      console.error("Stars successful payment amount mismatch:", {
+        chatId,
+        plan: plan.id,
+        currency,
+        totalAmount,
+        expectedStars,
+        chargeId,
       });
       return;
     }
@@ -7348,23 +7749,36 @@ export async function startBot(botToken: string) {
     const state = readPaymentsState();
 
     // Telegram can redeliver an update; crediting twice would be free time.
-    if (chargeId && (state.starsCharges ?? []).includes(chargeId)) {
-      console.warn("Stars payment already credited, ignoring replay:", { chargeId });
+    if ((state.starsCharges ?? []).includes(chargeId)) {
+      console.warn("Stars payment already credited, ignoring replay:", {
+        chargeId,
+      });
       return;
     }
 
-    const activeUntil = grantSubscription(state, chatId, plan.id, plan.days);
+    const activeUntil = grantSubscription(
+      state,
+      chatId,
+      plan.id,
+      plan.days,
+      {
+        paid: true,
+        paymentSource: "stars",
+      },
+    );
 
-    if (chargeId) {
-      state.starsCharges = [...(state.starsCharges ?? []), chargeId].slice(-500);
-    }
+    state.starsCharges = [
+      ...(state.starsCharges ?? []),
+      chargeId,
+    ].slice(-500);
 
     writePaymentsState(state);
 
     console.log("Stars payment credited:", {
       chatId,
       plan: plan.id,
-      stars: payment.total_amount,
+      stars: totalAmount,
+      chargeId,
       activeUntil,
     });
 
@@ -7373,7 +7787,7 @@ export async function startBot(botToken: string) {
         "✅ Payment received — your subscription is active.",
         "",
         `Plan: ${plan.label} (${plan.days} days)`,
-        `Paid: ${payment.total_amount} ⭐`,
+        `Paid: ${totalAmount} ⭐`,
         `Expires: ${new Date(activeUntil).toUTCString()}`,
         "",
         "Next: open the dashboard to connect a wallet and start mining.",
@@ -7777,6 +8191,23 @@ export async function startBot(botToken: string) {
       return;
     }
 
+    if (
+      !isAdminChatId(chatId) &&
+      !hasActiveSubscriptionForChat(readPaymentsState(), chatId)
+    ) {
+      await ctx.reply(
+        [
+          "💎 Aktif bir bulut madenciliği aboneliğin yok.",
+          "",
+          `Önce ${TRIAL_DAYS} günlük ücretsiz denemeyi kullanabilir veya bir plan satın alabilirsin.`,
+          "",
+          "Planlar: /plans",
+          `Ücretsiz deneme: /trial`,
+        ].join("\n"),
+      );
+      return;
+    }
+
     try {
       const state = readBeeMinerState();
       const id = `${chatId}:${walletName}`;
@@ -7902,6 +8333,23 @@ export async function startBot(botToken: string) {
       return;
     }
 
+    if (
+      !isAdminChatId(chatId) &&
+      !hasActiveSubscriptionForChat(readPaymentsState(), chatId)
+    ) {
+      await ctx.reply(
+        [
+          "💎 Aktif bir bulut madenciliği aboneliğin yok.",
+          "",
+          `Önce ${TRIAL_DAYS} günlük ücretsiz denemeyi kullanabilir veya bir plan satın alabilirsin.`,
+          "",
+          "Planlar: /plans",
+          `Ücretsiz deneme: /trial`,
+        ].join("\n"),
+      );
+      return;
+    }
+
     const state = readBeeMinerState();
     const pending = state.miners.filter(
       (m) => m.chatId === chatId && m.status === "pending_authorization",
@@ -7998,7 +8446,11 @@ export async function startBot(botToken: string) {
           });
         }
 
-        await ctx.reply(`✅ ${record.walletName} bağlandı, otomatik madencilik başladı.`);
+        if (!alreadyMining) {
+          await ctx.reply(
+            `✅ ${record.walletName} bağlandı, otomatik madencilik başladı.`,
+          );
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
 
@@ -8128,6 +8580,23 @@ export async function startBot(botToken: string) {
 
     if (!chatId) {
       await ctx.reply("Sohbet bilgisi alınamadı.");
+      return;
+    }
+
+    if (
+      !isAdminChatId(chatId) &&
+      !hasActiveSubscriptionForChat(readPaymentsState(), chatId)
+    ) {
+      await ctx.reply(
+        [
+          "💎 Aktif bir bulut madenciliği aboneliğin yok.",
+          "",
+          `Önce ${TRIAL_DAYS} günlük ücretsiz denemeyi kullanabilir veya bir plan satın alabilirsin.`,
+          "",
+          "Planlar: /plans",
+          `Ücretsiz deneme: /trial`,
+        ].join("\n"),
+      );
       return;
     }
 

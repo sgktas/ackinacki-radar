@@ -898,6 +898,10 @@ async function completeTaskFromDashboard(taskId) {
 // ---------------------------------------------------------------------------
 
 const beeMinerFile = path.join(dataDir, "bee-miners.json");
+const beeDiagnosticsFile = path.join(
+  dataDir,
+  "bee-epoch-diagnostics.jsonl",
+);
 const paymentsFile = path.join(dataDir, "payments.json");
 
 type BeeMinerRecord = {
@@ -963,19 +967,46 @@ const REWARD_FEED_FORCE_READ_AFTER_MS = 45 * 1000;
 const REWARD_FEED_CRITICAL_SAFE_MIN_AGE_MS = 60 * 1000;
 const REWARD_FEED_CRITICAL_SAFE_MAX_AGE_MS = 100 * 1000;
 
+// Reward confirmation is only interesting after a successful claim submission.
+// Stop polling an old claim before the next normal five-minute reward cycle.
+const REWARD_FEED_CLAIM_WINDOW_MS = Number(
+  process.env.REWARD_FEED_CLAIM_WINDOW_MS || 4 * 60 * 1000,
+);
+
 const rewardFeedPollRaw = Number(process.env.REWARD_FEED_POLL_MS || 15000);
 // The reward feed is a small, per-miner chain read. Keep it responsive without
 // allowing an accidental zero/very-low environment value to hammer the RPC.
 const REWARD_FEED_POLL_MS = Number.isFinite(rewardFeedPollRaw)
   ? Math.max(10_000, Math.floor(rewardFeedPollRaw))
   : 15_000;
-const REWARD_FEED_MAX = 100;
+/*
+ * PHASE_7I_20260816
+ *
+ * The old dashboard retained only the last 100
+ * reward rows. A normal mining cycle can contain
+ * far more than that.
+ *
+ * 4096 is a safety ceiling, not a UI page limit.
+ * The feed is explicitly cleared at the next cycle
+ * boundary, therefore a complete cycle fits here.
+ */
+const REWARD_FEED_MAX = 4096;
 const REWARD_NACKL_CURRENCY = 1;
 
 type RewardTick = { at: string; amount: number };
+// HEALTH_REWARD_CYCLE_FIX_20260814
+type RewardCycleState = {
+  baselineTotal: number;
+  count: number;
+  lastTapSum: number | null;
+  startedAt: string | null;
+  partial: boolean;
+};
+
 type RewardFeedState = {
   lastTotals: Record<string, number>;
   feeds: Record<string, RewardTick[]>;
+  cycles: Record<string, RewardCycleState>;
 };
 
 const rewardFeedFile = path.join(process.cwd(), "data", "reward-feed.json");
@@ -1003,9 +1034,116 @@ function readRewardFeedState(): RewardFeedState {
           : [],
       ]),
     ) as Record<string, RewardTick[]>;
-    return { lastTotals, feeds };
+    const rawCycles =
+      parsed?.cycles &&
+      typeof parsed.cycles === "object"
+        ? parsed.cycles
+        : {};
+
+    const cycles = Object.fromEntries(
+      Object.entries(feeds).map(
+        ([walletName, entries]) => {
+          const raw: any =
+            (rawCycles as any)[walletName];
+
+          if (
+            raw &&
+            typeof raw.baselineTotal === "number" &&
+            Number.isFinite(raw.baselineTotal)
+          ) {
+            return [
+              walletName,
+              {
+                baselineTotal:
+                  raw.baselineTotal,
+
+                count:
+                  typeof raw.count === "number" &&
+                  Number.isFinite(raw.count)
+                    ? Math.max(
+                        0,
+                        Math.floor(raw.count),
+                      )
+                    : 0,
+
+                lastTapSum:
+                  typeof raw.lastTapSum === "number" &&
+                  Number.isFinite(raw.lastTapSum)
+                    ? raw.lastTapSum
+                    : null,
+
+                startedAt:
+                  typeof raw.startedAt === "string"
+                    ? raw.startedAt
+                    : null,
+
+                partial:
+                  raw.partial === true,
+              } as RewardCycleState,
+            ];
+          }
+
+          const visibleSum =
+            entries.reduce(
+              (sum, entry) =>
+                sum +
+                (
+                  Number(entry.amount) ||
+                  0
+                ),
+              0,
+            );
+
+          const chainTotal =
+            Number(
+              lastTotals[walletName]
+            );
+
+          return [
+            walletName,
+            {
+              baselineTotal:
+                Number.isFinite(chainTotal)
+                  ? Math.max(
+                      0,
+                      chainTotal -
+                        visibleSum,
+                    )
+                  : 0,
+
+              count:
+                entries.length,
+
+              lastTapSum:
+                null,
+
+              startedAt:
+                entries[0]?.at ??
+                null,
+
+              partial:
+                entries.length > 0,
+            } as RewardCycleState,
+          ];
+        },
+      ),
+    ) as Record<
+      string,
+      RewardCycleState
+    >;
+
+    return {
+      lastTotals,
+      feeds,
+      cycles,
+    };
+
   } catch {
-    return { lastTotals: {}, feeds: {} };
+    return {
+      lastTotals: {},
+      feeds: {},
+      cycles: {},
+    };
   }
 }
 
@@ -1016,9 +1154,21 @@ const rewardFeed = new Map<string, RewardTick[]>(
 const rewardLastTotal = new Map<string, number>(
   Object.entries(storedRewardFeedState.lastTotals),
 );
+
+const rewardCycleState =
+  new Map<string, RewardCycleState>(
+    Object.entries(
+      storedRewardFeedState.cycles
+    ),
+  );
 const rewardLastChainReadAt = new Map<string, string>();
 let rewardLastForcedLeaseKey: string | null = null;
 let rewardFeedPollInFlight = false;
+
+// walletName -> last claim timestamp whose reward delta was already observed.
+// This is intentionally in memory: after a process restart the worst case is
+// one harmless re-check of a still-recent claim.
+const rewardHandledClaimAt = new Map<string, string>();
 
 function shouldForceRewardReadDuringBeeCritical(
   miners: BeeMinerRecord[],
@@ -1082,8 +1232,20 @@ function shouldForceRewardReadDuringBeeCritical(
 
 function writeRewardFeedState(): void {
   const state: RewardFeedState = {
-    lastTotals: Object.fromEntries(rewardLastTotal),
-    feeds: Object.fromEntries(rewardFeed),
+    lastTotals:
+      Object.fromEntries(
+        rewardLastTotal
+      ),
+
+    feeds:
+      Object.fromEntries(
+        rewardFeed
+      ),
+
+    cycles:
+      Object.fromEntries(
+        rewardCycleState
+      ),
   };
   fs.writeFileSync(rewardFeedFile, JSON.stringify(state, null, 2), "utf-8");
 }
@@ -1155,28 +1317,85 @@ function readMiningWatchesForRewards(): Map<string, string> {
   }
 }
 
+function rewardClaimNeedsCheck(
+  miner: BeeMinerRecord,
+  now: number,
+): boolean {
+  const claimAt = String(miner.lastClaimSubmittedAt || "").trim();
+
+  if (!claimAt) {
+    return false;
+  }
+
+  const claimAtMs = Date.parse(claimAt);
+
+  if (!Number.isFinite(claimAtMs)) {
+    return false;
+  }
+
+  const ageMs = now - claimAtMs;
+
+  if (ageMs < 0 || ageMs > REWARD_FEED_CLAIM_WINDOW_MS) {
+    return false;
+  }
+
+  // The chain delta for this exact claim was already observed.
+  if (rewardHandledClaimAt.get(miner.walletName) === claimAt) {
+    return false;
+  }
+
+  // Persisted miner state is stronger than the in-memory marker after restart.
+  const rewardAtMs = Date.parse(String(miner.lastRewardAt || ""));
+
+  if (Number.isFinite(rewardAtMs) && rewardAtMs >= claimAtMs) {
+    rewardHandledClaimAt.set(miner.walletName, claimAt);
+    return false;
+  }
+
+  return true;
+}
+
 async function pollRewardFeed(): Promise<void> {
   const miners = readBeeMinerState().miners.filter(
     (m) => m.status === "active",
   );
 
-  // Yield to Bee while it is submitting — but not forever. The autopilot runs
-  // back-to-back sessions, so this guard held almost continuously and
-  // `rewardLastChainReadAt` went permanently stale, which is what put
-  // "Zincir bağlantısı bekleniyor" on the dashboard even though the chain was
-  // perfectly reachable. Let one read through when the last successful one is
-  // older than this: it is a single account query (~70ms on the healthy half of
-  // the endpoint), which is not what threatens a submission.
-  if (
-    isBeeChainCritical() &&
-    !shouldForceRewardReadDuringBeeCritical(miners)
-  ) {
+  if (!miners.length) {
     return;
   }
 
   const watches = readMiningWatchesForRewards();
+  const now = Date.now();
 
-  for (const miner of miners) {
+  // Every newly activated miner needs one baseline. After that, only wallets
+  // with a recent successful claim submission are eligible for provider reads.
+  const targets = miners.filter((miner) => {
+    if (!watches.has(miner.walletName)) {
+      return false;
+    }
+
+    if (!rewardLastTotal.has(miner.walletName)) {
+      return true;
+    }
+
+    return rewardClaimNeedsCheck(miner, now);
+  });
+
+  if (!targets.length) {
+    return;
+  }
+
+  // Bee remains the priority owner of the shared endpoint. During a critical
+  // lease we keep the existing single-safe-read exception, but only when there
+  // is actually a baseline or claim that needs observation.
+  if (
+    isBeeChainCritical() &&
+    !shouldForceRewardReadDuringBeeCritical(targets)
+  ) {
+    return;
+  }
+
+  for (const miner of targets) {
     const popit = watches.get(miner.walletName);
 
     if (!popit) {
@@ -1189,34 +1408,238 @@ async function pollRewardFeed(): Promise<void> {
       continue;
     }
 
-    rewardLastChainReadAt.set(miner.walletName, new Date().toISOString());
+    rewardLastChainReadAt.set(
+      miner.walletName,
+      new Date().toISOString(),
+    );
 
-    const previous = rewardLastTotal.get(miner.walletName);
-    rewardLastTotal.set(miner.walletName, total);
+    const previous =
+      rewardLastTotal.get(
+        miner.walletName
+      );
 
-    // First sample only establishes the baseline — a "delta" against nothing
-    // would show the entire lifetime balance as one giant fake reward.
-    if (previous == null || total <= previous) {
-      if (previous !== total) writeRewardFeedState();
+    rewardLastTotal.set(
+      miner.walletName,
+      total,
+    );
+
+    const tapSum =
+      typeof miner.lastTapSum === "number" &&
+      Number.isFinite(
+        miner.lastTapSum
+      )
+        ? miner.lastTapSum
+        : null;
+
+    let cycle =
+      rewardCycleState.get(
+        miner.walletName
+      );
+
+    if (!cycle) {
+      const visible =
+        rewardFeed.get(
+          miner.walletName
+        ) ?? [];
+
+      const visibleSum =
+        visible.reduce(
+          (sum, entry) =>
+            sum +
+            (
+              Number(entry.amount) ||
+              0
+            ),
+          0,
+        );
+
+      cycle = {
+        baselineTotal:
+          previous != null
+            ? Math.max(
+                0,
+                previous -
+                  visibleSum,
+              )
+            : total,
+
+        count:
+          visible.length,
+
+        lastTapSum:
+          tapSum,
+
+        startedAt:
+          visible[0]?.at ??
+          null,
+
+        partial:
+          visible.length > 0,
+      };
+    }
+
+    let cycleChanged =
+      false;
+
+    // 12000 -> small value means the contract entered
+    // the next mining cycle.
+    if (
+      tapSum !== null &&
+      cycle.lastTapSum !== null &&
+      tapSum + 1000 <
+        cycle.lastTapSum
+    ) {
+      const previousTapSum =
+        cycle.lastTapSum;
+
+      cycle = {
+        // "previous" is the cumulative locked NACKL before
+        // the first reward observed in the new cycle.
+        baselineTotal:
+          previous ?? total,
+
+        count: 0,
+
+        lastTapSum:
+          tapSum,
+
+        startedAt:
+          new Date()
+            .toISOString(),
+
+        partial:
+          false,
+      };
+
+      cycleChanged =
+        true;
+
+      /*
+       * PHASE_7I_CURRENT_CYCLE_FEED_RESET
+       *
+       * The summary baseline/count above is the
+       * authoritative cycle total.
+       *
+       * Reward rows are only a visual history for
+       * the CURRENT cycle, so discard the previous
+       * cycle's rows at the same confirmed boundary.
+       */
+      rewardFeed.set(
+        miner.walletName,
+        [],
+      );
+
+      console.log(
+        "Reward cycle reset detected:",
+        {
+          walletName:
+            miner.walletName,
+
+          previousTapSum,
+
+          newTapSum:
+            tapSum,
+        },
+      );
+
+    } else if (
+      tapSum !== null &&
+      cycle.lastTapSum !==
+        tapSum
+    ) {
+      cycle.lastTapSum =
+        tapSum;
+
+      cycleChanged =
+        true;
+    }
+
+    rewardCycleState.set(
+      miner.walletName,
+      cycle,
+    );
+
+    // First successful read establishes a baseline only. Normally this happens
+    // before the first claim because the miner spends minutes active before a
+    // reward boundary.
+    if (previous == null) {
+      writeRewardFeedState();
+      continue;
+    }
+
+    if (total <= previous) {
+      if (
+        total !== previous ||
+        cycleChanged
+      ) {
+        writeRewardFeedState();
+      }
+
       continue;
     }
 
     const rewardAt = new Date().toISOString();
     const rewardAmount = total - previous;
     const feed = rewardFeed.get(miner.walletName) ?? [];
-    feed.push({ at: rewardAt, amount: rewardAmount });
-    rewardFeed.set(miner.walletName, feed.slice(-REWARD_FEED_MAX));
+
+    feed.push({
+      at: rewardAt,
+      amount: rewardAmount,
+    });
+
+    rewardFeed.set(
+      miner.walletName,
+      feed.slice(
+        -REWARD_FEED_MAX
+      ),
+    );
+
+    // Feed retains the complete current cycle (4096-row safety ceiling).
+    // Cycle counter does NOT have that limit.
+    cycle.count += 1;
+
+    if (!cycle.startedAt) {
+      cycle.startedAt =
+        rewardAt;
+    }
+
+    rewardCycleState.set(
+      miner.walletName,
+      cycle,
+    );
+
+    const claimAt = String(
+      miner.lastClaimSubmittedAt || "",
+    ).trim();
+
+    if (claimAt) {
+      rewardHandledClaimAt.set(
+        miner.walletName,
+        claimAt,
+      );
+    }
+
     writeRewardFeedState();
 
     // A successful claim RPC only proves submission. The locked NACKL delta
     // observed here is the authoritative reward confirmation.
     const current = readBeeMinerState();
-    const currentMiner = current.miners.find((m) => m.id === miner.id);
+    const currentMiner = current.miners.find(
+      (m) => m.id === miner.id,
+    );
+
     if (currentMiner) {
       currentMiner.lastRewardAt = rewardAt;
       currentMiner.lastError = null;
       writeBeeMinerState(current);
     }
+
+    console.log("Reward feed claim confirmed:", {
+      walletName: miner.walletName,
+      claimAt: claimAt || null,
+      amount: rewardAmount,
+      at: rewardAt,
+    });
   }
 }
 
@@ -1246,7 +1669,26 @@ type PendingInvoice = {
   amountTonRaw?: string;
 };
 
-type Subscription = { planId: string; activeUntil: string };
+type Subscription = {
+  planId: string;
+  activeUntil: string;
+  trial?: boolean;
+};
+
+type ReferralProfile = {
+  code: string;
+  createdAt: string;
+};
+
+type ReferralBinding = {
+  referredChatId: number;
+  referrerChatId: number;
+  code: string;
+  boundAt: string;
+  qualifiedAt?: string | null;
+  qualifiedPlanId?: string | null;
+  paymentSource?: string | null;
+};
 
 type PaymentsState = {
   lastCheckedBalanceRaw: string | null;
@@ -1258,7 +1700,549 @@ type PaymentsState = {
   trialUsed?: number[];
   starsCharges?: string[];
   tonLastLt?: number;
+
+  // REFERRAL BACKEND STEP1
+  referralProfiles?: Record<string, ReferralProfile>;
+  referrals?: Record<string, ReferralBinding>;
+
+  referralRewards?: Array<{
+    referrerChatId: number;
+    threshold: number;
+    daysAdded: number;
+    totalRewardDays: number;
+    at: string;
+  }>;
 };
+
+type DashboardMiningHealthStatus =
+  | "healthy"
+  | "warning"
+  | "critical"
+  | "idle";
+
+function readBeeMiningHealth(minerIds: Set<string>) {
+  const empty = {
+    available: false,
+    status: "idle" as DashboardMiningHealthStatus,
+    scope: "cycle" as const,
+    windowHours: null as number | null,
+    total: 0,
+    healthy: 0,
+    recovered: 0,
+    pending: 0,
+    lost: 0,
+    claimIssues: 0,
+    successRate: null as number | null,
+    latest: [] as Array<{
+      at: string;
+      minerId: string;
+      walletName: string;
+      epoch5mStart: string;
+      status: "healthy" | "recovered" | "lost";
+      taps: number | null;
+      tapDelta: number | null;
+      retries: number;
+      retryMode: string;
+      settlement: string;
+      rejected: boolean;
+      claim: "none" | "queued" | "failed" | "collected";
+    }>,
+  };
+
+  if (!minerIds.size || !fs.existsSync(beeDiagnosticsFile)) {
+    return empty;
+  }
+
+  try {
+    // Read only the latest 2 MB so dashboard polling stays cheap even when
+    // the append-only diagnostic history becomes large.
+    const stat = fs.statSync(beeDiagnosticsFile);
+    const maxBytes = 2 * 1024 * 1024;
+    const start = Math.max(0, stat.size - maxBytes);
+    const length = stat.size - start;
+
+    if (length <= 0) {
+      return { ...empty, available: true };
+    }
+
+    const fd = fs.openSync(beeDiagnosticsFile, "r");
+    let text = "";
+
+    try {
+      const buffer = Buffer.alloc(length);
+      fs.readSync(fd, buffer, 0, length, start);
+      text = buffer.toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+
+    // Tail read may start halfway through a JSONL record.
+    if (start > 0) {
+      const firstNewline = text.indexOf("\n");
+      text = firstNewline >= 0 ? text.slice(firstNewline + 1) : "";
+    }
+
+    // No rolling 24h cutoff.
+    // The latest large tapSum reset determines the current cycle.
+    const cutoff = 0;
+
+    const sessions: any[] = [];
+
+    const claims = new Map<
+      string,
+      "queued" | "failed" | "collected"
+    >();
+
+    const lastTapHighByMiner =
+      new Map<string, number>();
+
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+
+      try {
+        const event = JSON.parse(line);
+
+        if (
+          !event ||
+          typeof event !== "object" ||
+          !minerIds.has(String(event.minerId || ""))
+        ) {
+          continue;
+        }
+
+        const eventTime = Date.parse(String(event.at || ""));
+
+        if (!Number.isFinite(eventTime) || eventTime < cutoff) {
+          continue;
+        }
+
+        const key =
+          `${String(event.minerId)}:${String(event.epoch5mStart || "")}`;
+
+        if (
+          event.type ===
+          "session_finished"
+        ) {
+          const minerId =
+            String(
+              event.minerId ||
+              ""
+            );
+
+          const values = [
+            event.tapSumBefore,
+            event.tapSumAfter,
+          ]
+            .filter(
+              (value: any) =>
+                typeof value ===
+                  "number" &&
+                Number.isFinite(
+                  value
+                ),
+            )
+            .map(
+              (value: any) =>
+                Number(value),
+            );
+
+          if (values.length) {
+            const low =
+              Math.min(
+                ...values
+              );
+
+            const high =
+              Math.max(
+                ...values
+              );
+
+            const previousHigh =
+              lastTapHighByMiner.get(
+                minerId
+              );
+
+            // Large drop =
+            // new 12k mining cycle.
+            if (
+              previousHigh != null &&
+              low + 1000 <
+                previousHigh
+            ) {
+              for (
+                let i =
+                  sessions.length - 1;
+                i >= 0;
+                i -= 1
+              ) {
+                if (
+                  String(
+                    sessions[i]
+                      ?.minerId ||
+                    ""
+                  ) === minerId
+                ) {
+                  sessions.splice(
+                    i,
+                    1,
+                  );
+                }
+              }
+
+              for (
+                const claimKey
+                of Array.from(
+                  claims.keys()
+                )
+              ) {
+                if (
+                  claimKey.startsWith(
+                    `${minerId}:`
+                  )
+                ) {
+                  claims.delete(
+                    claimKey
+                  );
+                }
+              }
+
+              lastTapHighByMiner.set(
+                minerId,
+                high,
+              );
+
+            } else {
+              lastTapHighByMiner.set(
+                minerId,
+
+                previousHigh == null
+                  ? high
+                  : Math.max(
+                      previousHigh,
+                      high,
+                    ),
+              );
+            }
+          }
+
+          sessions.push(
+            event
+          );
+
+        } else if (
+          event.type ===
+          "claim_queued"
+        ) {
+          claims.set(key, "queued");
+        } else if (event.type === "claim_failed") {
+          claims.set(key, "failed");
+        } else if (event.type === "claim_collected") {
+          claims.set(key, "collected");
+        }
+      } catch {
+        // A partially written final JSONL row must never break the dashboard.
+      }
+    }
+
+    let healthy = 0;
+    let recovered = 0;
+    let pending = 0;
+    let lost = 0;
+
+    for (
+      let index = 0;
+      index < sessions.length;
+      index += 1
+    ) {
+      const session =
+        sessions[index];
+
+      let healthStatus:
+        | "healthy"
+        | "recovered"
+        | "pending"
+        | "lost";
+
+      if (
+        session.result ===
+        "healthy"
+      ) {
+        healthStatus =
+          Number(
+            session.retries ||
+            0
+          ) > 0
+            ? "recovered"
+            : "healthy";
+
+      } else {
+        const tapDelta =
+          typeof session.tapDelta ===
+            "number" &&
+          Number.isFinite(
+            session.tapDelta
+          )
+            ? session.tapDelta
+            : null;
+
+        const baseline =
+          typeof session.tapSumAfter ===
+            "number" &&
+          Number.isFinite(
+            session.tapSumAfter
+          )
+            ? session.tapSumAfter
+            :
+          typeof session.tapSumBefore ===
+            "number" &&
+          Number.isFinite(
+            session.tapSumBefore
+          )
+            ? session.tapSumBefore
+            : null;
+
+        // Immediate next session belonging
+        // to the SAME miner.
+        const next =
+          sessions
+            .slice(
+              index + 1
+            )
+            .find(
+              (row) =>
+                String(
+                  row.minerId ||
+                  ""
+                ) ===
+                String(
+                  session.minerId ||
+                  ""
+                ),
+            );
+
+        const nextBefore =
+          next &&
+          typeof next.tapSumBefore ===
+            "number" &&
+          Number.isFinite(
+            next.tapSumBefore
+          )
+            ? next.tapSumBefore
+            : null;
+
+        const expected =
+          Math.max(
+            1,
+            Number(
+              session.taps ||
+              70
+            ),
+          );
+
+        // Example:
+        // failed session ends on 10779,
+        // next session starts on 10849.
+        // +70 arrived late => NOT LOST.
+        const delayed =
+          baseline !== null &&
+          nextBefore !== null &&
+          nextBefore -
+            baseline >=
+            Math.max(
+              1,
+              Math.floor(
+                expected *
+                0.8
+              ),
+            );
+
+        if (
+          (
+            tapDelta !== null &&
+            tapDelta > 0
+          ) ||
+          delayed
+        ) {
+          healthStatus =
+            "recovered";
+
+        } else if (
+          String(
+            session.settlement ||
+            ""
+          ) === "timeout"
+        ) {
+          // Timeout only means our wait
+          // window expired.
+          healthStatus =
+            "pending";
+
+        } else if (
+          session
+            .sawSessionRejected ===
+            true ||
+          String(
+            session.settlement ||
+            ""
+          ) === "sdk_error"
+        ) {
+          healthStatus =
+            "lost";
+
+        } else {
+          healthStatus =
+            "pending";
+        }
+      }
+
+      session.__healthStatus =
+        healthStatus;
+
+      if (
+        healthStatus ===
+        "healthy"
+      ) {
+        healthy += 1;
+
+      } else if (
+        healthStatus ===
+        "recovered"
+      ) {
+        recovered += 1;
+
+      } else if (
+        healthStatus ===
+        "pending"
+      ) {
+        pending += 1;
+
+      } else {
+        lost += 1;
+      }
+    }
+
+    let claimIssues = 0;
+
+    for (const claimState of claims.values()) {
+      if (claimState === "failed") {
+        claimIssues += 1;
+      }
+    }
+
+    const total = healthy + recovered + lost;
+
+    const successRate =
+      total > 0
+        ? Number(
+            (((healthy + recovered) / total) * 100).toFixed(2),
+          )
+        : null;
+
+    const finalizedSessions =
+      sessions.filter(
+        (session) =>
+          session.__healthStatus !==
+          "pending",
+      );
+
+    const lastSession =
+      finalizedSessions.length > 0
+        ? finalizedSessions[
+            finalizedSessions.length -
+            1
+          ]
+        : null;
+
+    const status:
+      DashboardMiningHealthStatus =
+      lastSession &&
+      lastSession.__healthStatus ===
+        "lost"
+        ? "critical"
+        :
+      lost > 0 ||
+      claimIssues > 0 ||
+      pending > 0
+        ? "warning"
+        :
+      total > 0
+        ? "healthy"
+        : "idle";
+
+    const latest = sessions
+      .filter(
+        (session) =>
+          session.__healthStatus !==
+          "pending",
+      )
+      .slice(-20)
+      .reverse()
+      .map((session) => {
+        const retries = Number(session.retries || 0);
+
+        const sessionStatus:
+          | "healthy"
+          | "recovered"
+          | "lost" =
+          session.__healthStatus ===
+            "lost"
+            ? "lost"
+            :
+          session.__healthStatus ===
+            "recovered"
+            ? "recovered"
+            : "healthy";
+
+        const key =
+          `${String(session.minerId)}:${String(session.epoch5mStart || "")}`;
+
+        return {
+          at: String(session.at || session.endedAt || ""),
+          minerId: String(session.minerId || ""),
+          walletName: String(session.walletName || ""),
+          epoch5mStart: String(session.epoch5mStart || ""),
+          status: sessionStatus,
+          taps:
+            typeof session.taps === "number"
+              ? session.taps
+              : null,
+          tapDelta:
+            typeof session.tapDelta === "number"
+              ? session.tapDelta
+              : null,
+          retries,
+          retryMode: String(session.retryMode || "none"),
+          settlement: String(session.settlement || "unknown"),
+          rejected: session.sawSessionRejected === true,
+          claim: claims.get(key) || "none",
+        };
+      });
+
+    return {
+      available: true,
+      status,
+      scope: "cycle" as const,
+      windowHours: null,
+      total,
+      healthy,
+      recovered,
+      pending,
+      lost,
+      claimIssues,
+      successRate,
+      latest,
+    };
+  } catch (error) {
+    console.warn("readBeeMiningHealth failed:", {
+      message:
+        error instanceof Error
+          ? error.message
+          : String(error),
+    });
+
+    return empty;
+  }
+}
 
 function readBeeMinerState(): BeeMinerState {
   ensureStorage();
@@ -1285,6 +2269,9 @@ function readPaymentsState(): PaymentsState {
   }
   const parsed = JSON.parse(raw);
   return {
+    // Preserve bot-owned fields such as the NACKL settle cursors when the
+    // dashboard writes referral metadata back to payments.json.
+    ...parsed,
     lastCheckedBalanceRaw: parsed?.lastCheckedBalanceRaw ?? null,
     pendingInvoices: Array.isArray(parsed?.pendingInvoices) ? parsed.pendingInvoices : [],
     subscriptions: parsed?.subscriptions && typeof parsed.subscriptions === "object" ? parsed.subscriptions : {},
@@ -1348,6 +2335,227 @@ function allocateNacklInvoiceAmountRaw(plan: Plan, state: PaymentsState): string
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const SESSION_SECRET = process.env.DASHBOARD_SESSION_SECRET || BOT_TOKEN || "insecure-dev-secret";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+// ---------------------------------------------------------------------------
+// REFERRAL BACKEND STEP1
+// This step creates referral profiles, links and permanent bindings only.
+// Paid qualification and reward granting are connected in Step 2.
+// ---------------------------------------------------------------------------
+
+const REFERRAL_PUBLIC_BASE_URL = String(
+  process.env.PUBLIC_BASE_URL ||
+    "https://ackinackiradar.com",
+).replace(/\/+$/, "");
+
+const REFERRAL_MILESTONES = [
+  {
+    count: 1,
+    totalDays: 15,
+  },
+  {
+    count: 3,
+    totalDays: 30,
+  },
+  {
+    count: 9,
+    totalDays: 90,
+  },
+] as const;
+
+
+function makeReferralCode(
+  chatId: number,
+): string {
+  return crypto
+    .createHmac(
+      "sha256",
+      SESSION_SECRET,
+    )
+    .update(
+      `referral:${chatId}`,
+    )
+    .digest(
+      "base64url",
+    )
+    .slice(
+      0,
+      16,
+    );
+}
+
+
+function ensureReferralProfile(
+  state: PaymentsState,
+  chatId: number,
+): {
+  profile: ReferralProfile;
+  changed: boolean;
+} {
+  if (
+    !state.referralProfiles ||
+    typeof state.referralProfiles !==
+      "object"
+  ) {
+    state.referralProfiles = {};
+  }
+
+  const key =
+    String(chatId);
+
+  const existing =
+    state.referralProfiles[key];
+
+  if (
+    existing &&
+    typeof existing.code ===
+      "string" &&
+    existing.code.length >= 8
+  ) {
+    return {
+      profile: existing,
+      changed: false,
+    };
+  }
+
+  const profile: ReferralProfile = {
+    code:
+      makeReferralCode(chatId),
+
+    createdAt:
+      new Date().toISOString(),
+  };
+
+  state.referralProfiles[key] =
+    profile;
+
+  return {
+    profile,
+    changed: true,
+  };
+}
+
+
+function findReferralOwnerByCode(
+  state: PaymentsState,
+  code: string,
+): number | null {
+  for (
+    const [chatIdRaw, profile]
+    of Object.entries(
+      state.referralProfiles || {},
+    )
+  ) {
+    if (
+      profile?.code !== code
+    ) {
+      continue;
+    }
+
+    const chatId =
+      Number(chatIdRaw);
+
+    if (
+      Number.isSafeInteger(chatId) &&
+      chatId > 0
+    ) {
+      return chatId;
+    }
+  }
+
+  return null;
+}
+
+
+function buildReferralDashboardState(
+  state: PaymentsState,
+  chatId: number,
+) {
+  const ensured =
+    ensureReferralProfile(
+      state,
+      chatId,
+    );
+
+  const invited =
+    Object.values(
+      state.referrals || {},
+    ).filter(
+      (item) =>
+        item &&
+        item.referrerChatId ===
+          chatId,
+    );
+
+  const qualified =
+    invited.filter(
+      (item) =>
+        Boolean(
+          item.qualifiedAt,
+        ),
+    );
+
+  const rewards =
+    (
+      state.referralRewards || []
+    ).filter(
+      (item) =>
+        item &&
+        item.referrerChatId ===
+          chatId,
+    );
+
+  const earnedDays =
+    rewards.reduce(
+      (sum, item) =>
+        sum +
+        Number(
+          item.daysAdded || 0,
+        ),
+      0,
+    );
+
+  const next =
+    REFERRAL_MILESTONES.find(
+      (item) =>
+        qualified.length <
+        item.count,
+    ) || null;
+
+  return {
+    changed:
+      ensured.changed,
+
+    data: {
+      code:
+        ensured.profile.code,
+
+      link:
+        REFERRAL_PUBLIC_BASE_URL +
+        "/referrals?ref=" +
+        encodeURIComponent(
+          ensured.profile.code,
+        ),
+
+      invitedCount:
+        invited.length,
+
+      qualifiedCount:
+        qualified.length,
+
+      earnedDays,
+
+      nextThreshold:
+        next?.count ?? null,
+
+      nextRewardTotalDays:
+        next?.totalDays ?? null,
+
+      completed:
+        qualified.length >= 9,
+    },
+  };
+}
+
 const PAYMENTS_WALLET_NAME = process.env.PAYMENTS_WALLET_NAME || "ackinackiradarpayments";
 const NACKL_PAYMENTS_WALLET_NAME =
   process.env.NACKL_PAYMENTS_WALLET_NAME || PAYMENTS_WALLET_NAME;
@@ -1579,7 +2787,7 @@ const TELEGRAM_CLIENT_ID = process.env.TELEGRAM_CLIENT_ID || "";
 const TELEGRAM_CLIENT_SECRET = process.env.TELEGRAM_CLIENT_SECRET || "";
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "https://ackinackiradar.com").replace(/\/+$/, "");
 const TELEGRAM_OIDC_REDIRECT_URI = `${PUBLIC_BASE_URL}/api/auth/telegram/callback`;
-const DASHBOARD_PATH = "/dashboard.html";
+const DASHBOARD_PATH = "/cloud-miner";
 
 // Lazily built so a missing/unreachable JWKS can't break server startup.
 let telegramJwks: ReturnType<typeof createRemoteJWKSet> | null = null;
@@ -1938,6 +3146,438 @@ app.use(express.static(path.join(process.cwd(), "public")));
     }
   });
 
+
+  // ============================================================
+  // MINER_CYCLE_CHAIN_CLOCK_20260814
+  //
+  // Official Miner.sol:
+  //   currentBigEpochStart =
+  //     block.seqno - (block.seqno % MinerTapDelay)
+  //
+  // MinerTapDelay = 262000 blocks.
+  //
+  // Block boundaries are exact.
+  // Wall-clock UTC times are estimates from the LIVE measured
+  // chain block rate and are refreshed continuously.
+  // ============================================================
+
+  const MINER_CYCLE_BLOCK_PERIOD =
+    262_000;
+
+  const MINER_CYCLE_GRAPHQL_URL =
+    process.env.ACKI_MAINNET_GRAPHQL_URL ||
+    "https://mainnet.ackinacki.org/graphql";
+
+  const MINER_CYCLE_CACHE_MS =
+    15_000;
+
+  // Bootstrap comes from the live chain measurement made on
+  // 2026-08-14:
+  // 188 blocks / 65 sec = 2.892308 blocks/sec.
+  //
+  // It is only used until this server has collected two fresh
+  // chain samples. Then the live measured rate replaces it.
+  let minerCycleRateBps =
+    2.892308;
+
+  let minerCycleRateSource:
+    "bootstrap" | "live" =
+    "bootstrap";
+
+  let minerCycleLastSample: {
+    seqNo: number;
+    chainTimestamp: number;
+    fetchedAtMs: number;
+  } | null = null;
+
+  let minerCycleFetchInFlight:
+    Promise<any> | null =
+    null;
+
+
+  function buildMinerCycleClock(
+    sample: {
+      seqNo: number;
+      chainTimestamp: number;
+      fetchedAtMs: number;
+    },
+    stale: boolean,
+  ) {
+
+    const nowMs =
+      Date.now();
+
+    const ageSeconds =
+      Math.max(
+        0,
+        (
+          nowMs -
+          sample.fetchedAtMs
+        ) / 1000,
+      );
+
+    const projectedSeq =
+      sample.seqNo +
+      ageSeconds *
+        minerCycleRateBps;
+
+    const currentSeqNo =
+      Math.floor(
+        projectedSeq,
+      );
+
+    const epochStartSeq =
+      Math.floor(
+        currentSeqNo /
+          MINER_CYCLE_BLOCK_PERIOD,
+      ) *
+      MINER_CYCLE_BLOCK_PERIOD;
+
+    const epochEndSeq =
+      epochStartSeq +
+      MINER_CYCLE_BLOCK_PERIOD;
+
+    const elapsedBlocks =
+      Math.max(
+        0,
+        currentSeqNo -
+          epochStartSeq,
+      );
+
+    const remainingBlocks =
+      Math.max(
+        0,
+        epochEndSeq -
+          currentSeqNo,
+      );
+
+    const elapsedSeconds =
+      elapsedBlocks /
+      minerCycleRateBps;
+
+    const remainingSeconds =
+      remainingBlocks /
+      minerCycleRateBps;
+
+    const fullCycleSeconds =
+      MINER_CYCLE_BLOCK_PERIOD /
+      minerCycleRateBps;
+
+    const projectedChainTimestamp =
+      sample.chainTimestamp +
+      ageSeconds;
+
+    const epochStartTimestamp =
+      projectedChainTimestamp -
+      elapsedSeconds;
+
+    const epochEndTimestamp =
+      projectedChainTimestamp +
+      remainingSeconds;
+
+    const progress =
+      Math.min(
+        100,
+        Math.max(
+          0,
+          (
+            elapsedBlocks /
+            MINER_CYCLE_BLOCK_PERIOD
+          ) *
+          100,
+        ),
+      );
+
+    return {
+      periodBlocks:
+        MINER_CYCLE_BLOCK_PERIOD,
+
+      observedSeqNo:
+        sample.seqNo,
+
+      currentSeqNo,
+
+      epochStartSeq,
+
+      epochEndSeq,
+
+      elapsedBlocks,
+
+      remainingBlocks,
+
+      blocksPerSecond:
+        minerCycleRateBps,
+
+      rateSource:
+        minerCycleRateSource,
+
+      remainingSeconds,
+
+      fullCycleSeconds,
+
+      progress,
+
+      epochStartAt:
+        new Date(
+          epochStartTimestamp *
+            1000,
+        ).toISOString(),
+
+      epochEndAt:
+        new Date(
+          epochEndTimestamp *
+            1000,
+        ).toISOString(),
+
+      chainTimestamp:
+        sample.chainTimestamp,
+
+      observedAt:
+        new Date(
+          nowMs,
+        ).toISOString(),
+
+      sampleAgeSeconds:
+        ageSeconds,
+
+      stale,
+    };
+  }
+
+
+  async function readMinerCycleClock() {
+
+    const now =
+      Date.now();
+
+    if (
+      minerCycleLastSample &&
+      now -
+        minerCycleLastSample.fetchedAtMs <
+        MINER_CYCLE_CACHE_MS
+    ) {
+      return buildMinerCycleClock(
+        minerCycleLastSample,
+        false,
+      );
+    }
+
+    if (minerCycleFetchInFlight) {
+      return minerCycleFetchInFlight;
+    }
+
+    minerCycleFetchInFlight =
+      (async () => {
+
+        try {
+
+          const response =
+            await fetch(
+              MINER_CYCLE_GRAPHQL_URL,
+              {
+                method: "POST",
+
+                headers: {
+                  "Content-Type":
+                    "application/json",
+                },
+
+                body:
+                  JSON.stringify({
+                    query:
+                      "query{blockchain{blocks(last:1){edges{node{seq_no gen_utime}}}}}",
+                  }),
+
+                signal:
+                  AbortSignal.timeout(
+                    12_000,
+                  ),
+              },
+            );
+
+          if (!response.ok) {
+            throw new Error(
+              `HTTP ${response.status}`,
+            );
+          }
+
+          const payload:
+            any =
+            await response.json();
+
+          const node =
+            payload?.data
+              ?.blockchain
+              ?.blocks
+              ?.edges?.[0]
+              ?.node;
+
+          const seqNo =
+            Number(
+              node?.seq_no,
+            );
+
+          const chainTimestamp =
+            Number(
+              node?.gen_utime,
+            );
+
+          if (
+            !Number.isFinite(seqNo) ||
+            !Number.isFinite(
+              chainTimestamp,
+            )
+          ) {
+            throw new Error(
+              "INVALID_CHAIN_BLOCK_RESPONSE",
+            );
+          }
+
+          const fresh = {
+            seqNo:
+              Math.floor(seqNo),
+
+            chainTimestamp:
+              Math.floor(
+                chainTimestamp,
+              ),
+
+            fetchedAtMs:
+              Date.now(),
+          };
+
+          const previous =
+            minerCycleLastSample;
+
+          if (previous) {
+
+            const deltaBlocks =
+              fresh.seqNo -
+              previous.seqNo;
+
+            const deltaSeconds =
+              fresh.chainTimestamp -
+              previous.chainTimestamp;
+
+            if (
+              deltaBlocks > 0 &&
+              deltaSeconds >= 10
+            ) {
+
+              const observedRate =
+                deltaBlocks /
+                deltaSeconds;
+
+              // Reject impossible/noisy samples.
+              if (
+                observedRate >= 1 &&
+                observedRate <= 5
+              ) {
+
+                if (
+                  minerCycleRateSource ===
+                  "bootstrap"
+                ) {
+                  minerCycleRateBps =
+                    observedRate;
+                } else {
+                  // Smooth short-term block-time noise while
+                  // still following actual network speed.
+                  minerCycleRateBps =
+                    (
+                      minerCycleRateBps *
+                      0.65
+                    ) +
+                    (
+                      observedRate *
+                      0.35
+                    );
+                }
+
+                minerCycleRateSource =
+                  "live";
+              }
+            }
+          }
+
+          minerCycleLastSample =
+            fresh;
+
+          return buildMinerCycleClock(
+            fresh,
+            false,
+          );
+
+        } catch (error) {
+
+          // GraphQL has recently produced pool timeouts.
+          // Keep an existing chain sample alive instead of
+          // blanking the dashboard.
+          if (
+            minerCycleLastSample
+          ) {
+            return {
+              ...buildMinerCycleClock(
+                minerCycleLastSample,
+                true,
+              ),
+
+              warning:
+                error instanceof Error
+                  ? error.message
+                  : String(error),
+            };
+          }
+
+          throw error;
+
+        } finally {
+          minerCycleFetchInFlight =
+            null;
+        }
+      })();
+
+    return minerCycleFetchInFlight;
+  }
+
+
+  app.get(
+    "/api/dashboard/mining-cycle-clock",
+    requireDashboardAuth,
+    async (_req: any, res) => {
+
+      try {
+
+        const clock =
+          await readMinerCycleClock();
+
+        res.json({
+          ok: true,
+          clock,
+        });
+
+      } catch (error) {
+
+        console.warn(
+          "Mining cycle clock read failed:",
+          {
+            message:
+              error instanceof Error
+                ? error.message
+                : String(error),
+          },
+        );
+
+        res.status(503).json({
+          ok: false,
+          error:
+            "CHAIN_CLOCK_UNAVAILABLE",
+        });
+      }
+    },
+  );
+
+
   // --- Dashboard: overview (miners + subscription + plans) ---
   app.get("/api/dashboard/me", requireDashboardAuth, (req: any, res) => {
     const chatId = req.telegramId;
@@ -1964,12 +3604,139 @@ app.use(express.static(path.join(process.cwd(), "public")));
         rewardLastChainReadAt: rewardLastChainReadAt.get(miner.walletName) ?? null,
       }));
 
-    const subscription = paymentsState.subscriptions[String(chatId)] || null;
+    const ownedMinerIds = new Set(
+      minerState.miners
+        .filter((miner) => miner.chatId === chatId)
+        .map((miner) => miner.id),
+    );
+
+    const miningHealth =
+      readBeeMiningHealth(
+        ownedMinerIds
+      );
+
+    // Table:
+    // newest rows from the complete current-cycle feeds.
+    const dashboardRewards =
+      miners
+        .flatMap(
+          (m) =>
+            (
+              rewardFeed.get(
+                m.walletName
+              ) ??
+              []
+            ).map(
+              (tick) => ({
+                ...tick,
+                walletName:
+                  m.walletName,
+              }),
+            ),
+        )
+        .sort(
+          (a, b) =>
+            Date.parse(
+              String(
+                b.at ||
+                ""
+              )
+            ) -
+            Date.parse(
+              String(
+                a.at ||
+                ""
+              )
+            ),
+        )
+        .slice(
+          0,
+          REWARD_FEED_MAX,
+        );
+
+    // Total:
+    // complete cumulative delta since
+    // current mining-cycle baseline.
+    let rewardCycleTotalNackl =
+      0;
+
+    let rewardCycleCount =
+      0;
+
+    let rewardCyclePartial =
+      false;
+
+    for (
+      const miner
+      of miners
+    ) {
+      const cycle =
+        rewardCycleState.get(
+          miner.walletName
+        );
+
+      const chainTotal =
+        rewardLastTotal.get(
+          miner.walletName
+        );
+
+      if (
+        !cycle ||
+        chainTotal == null
+      ) {
+        continue;
+      }
+
+      rewardCycleTotalNackl +=
+        Math.max(
+          0,
+          chainTotal -
+            cycle.baselineTotal,
+        );
+
+      rewardCycleCount +=
+        cycle.count;
+
+      rewardCyclePartial ||=
+        cycle.partial;
+    }
+
+    const rewardCycle = {
+      totalNackl:
+        rewardCycleTotalNackl,
+
+      count:
+        rewardCycleCount,
+
+      partial:
+        rewardCyclePartial,
+    };
+
+    const subscription =
+      paymentsState
+        .subscriptions[
+          String(chatId)
+        ] ||
+      null;
+
+    const referralState =
+      buildReferralDashboardState(
+        paymentsState,
+        chatId,
+      );
+
+    if (referralState.changed) {
+      writePaymentsState(
+        paymentsState,
+      );
+    }
 
     res.json({
       ok: true,
       miners,
+      miningHealth,
       subscription,
+      referral: referralState.data,
       plans: PLANS.map((plan) => ({
         id: plan.id,
         label: plan.label,
@@ -1995,17 +3762,283 @@ app.use(express.static(path.join(process.cwd(), "public")));
         tapsPerSession: BEE_MINING_TAP_COUNT,
         sessionIntervalSeconds: BEE_MINING_INTERVAL_SECONDS,
       },
-      // Newest first for the dashboard monitor. Sampled off chain by
-      // pollRewardFeed, not taken from the bot's notification pipeline.
-      rewards: miners.flatMap((m) =>
-        (rewardFeed.get(m.walletName) ?? [])
-          .slice()
-          .reverse()
-          .map((tick) => ({ ...tick, walletName: m.walletName })),
-      ),
-      rewardFeedPollSeconds: Math.round(REWARD_FEED_POLL_MS / 1000),
+      // Visible table = latest 100.
+      // rewardCycle = uncapped current cycle.
+      rewards:
+        dashboardRewards,
+
+      rewardCycle,
+
+      rewardFeedPollSeconds:
+        Math.round(
+          REWARD_FEED_POLL_MS /
+          1000
+        ),
     });
   });
+
+
+  // --- Dashboard: bind a referral code permanently to this account ---
+  /*
+   * PHASE_7I_REWARD_CLEAR_ENDPOINT
+   *
+   * Clears only the visible reward-feed rows owned
+   * by the authenticated dashboard user.
+   *
+   * Current-cycle cumulative total/count remain
+   * untouched and continue until the real cycle
+   * boundary resets them.
+   */
+  app.post(
+    "/api/dashboard/rewards/clear",
+    requireDashboardAuth,
+    (req: any, res) => {
+
+      const chatId =
+        req.telegramId;
+
+      const state =
+        readBeeMinerState();
+
+      const walletNames =
+        Array.from(
+          new Set(
+            state.miners
+              .filter(
+                miner =>
+                  miner.chatId ===
+                  chatId
+              )
+              .map(
+                miner =>
+                  miner.walletName
+              )
+          )
+        );
+
+
+      for (
+        const walletName
+        of walletNames
+      ) {
+        rewardFeed.set(
+          walletName,
+          []
+        );
+      }
+
+
+      writeRewardFeedState();
+
+
+      console.log(
+        "Dashboard reward feed cleared:",
+        {
+          chatId,
+          wallets:
+            walletNames.length,
+        }
+      );
+
+
+      res.json({
+        ok: true,
+        clearedWallets:
+          walletNames.length,
+      });
+    }
+  );
+
+
+  app.post(
+    "/api/dashboard/referral/bind",
+    requireDashboardAuth,
+    (req: any, res) => {
+      const referredChatId =
+        Number(
+          req.telegramId,
+        );
+
+      const code =
+        String(
+          req.body?.code || "",
+        ).trim();
+
+      if (
+        !Number.isSafeInteger(
+          referredChatId,
+        ) ||
+        referredChatId <= 0 ||
+        !/^[A-Za-z0-9_-]{8,64}$/.test(
+          code,
+        )
+      ) {
+        res.status(
+          400,
+        ).json({
+          ok: false,
+          error:
+            "INVALID_REFERRAL_CODE",
+        });
+
+        return;
+      }
+
+      const state =
+        readPaymentsState();
+
+      const referrerChatId =
+        findReferralOwnerByCode(
+          state,
+          code,
+        );
+
+      if (
+        !referrerChatId
+      ) {
+        res.status(
+          404,
+        ).json({
+          ok: false,
+          error:
+            "REFERRAL_CODE_NOT_FOUND",
+        });
+
+        return;
+      }
+
+      if (
+        referrerChatId ===
+        referredChatId
+      ) {
+        res.status(
+          400,
+        ).json({
+          ok: false,
+          error:
+            "SELF_REFERRAL_NOT_ALLOWED",
+        });
+
+        return;
+      }
+
+      if (
+        !state.referrals ||
+        typeof state.referrals !==
+          "object"
+      ) {
+        state.referrals = {};
+      }
+
+      const key =
+        String(
+          referredChatId,
+        );
+
+      const existingBinding =
+        state.referrals[key];
+
+      if (
+        existingBinding
+      ) {
+        if (
+          existingBinding
+            .referrerChatId ===
+          referrerChatId
+        ) {
+          res.json({
+            ok: true,
+            bound: true,
+            alreadyBound: true,
+          });
+
+          return;
+        }
+
+        res.status(
+          409,
+        ).json({
+          ok: false,
+          error:
+            "REFERRAL_ALREADY_BOUND",
+        });
+
+        return;
+      }
+
+      const existingSubscription =
+        state.subscriptions[key];
+
+      // Trial users may still bind.
+      // Non-trial subscriptions cannot
+      // receive a referrer retroactively.
+      if (
+        existingSubscription &&
+        existingSubscription.trial !==
+          true
+      ) {
+        res.status(
+          409,
+        ).json({
+          ok: false,
+          error:
+            "REFERRAL_BIND_TOO_LATE",
+        });
+
+        return;
+      }
+
+      state.referrals[key] = {
+        referredChatId,
+        referrerChatId,
+        code,
+
+        boundAt:
+          new Date()
+            .toISOString(),
+
+        qualifiedAt: null,
+        qualifiedPlanId: null,
+        paymentSource: null,
+      };
+
+      writePaymentsState(
+        state,
+      );
+
+      console.log(
+        "Referral bound:",
+        {
+          referredChatId,
+          referrerChatId,
+        },
+      );
+
+      res.json({
+        ok: true,
+        bound: true,
+        alreadyBound: false,
+      });
+    },
+  );
+
+  // Mining access is checked at every dashboard entry point as well as
+  // inside the Bee scheduler. The scheduler remains the final authority, but
+  // refusing here prevents an unsubscribed wallet from looking active in UI.
+  function hasDashboardMiningAccess(chatId: number): boolean {
+    if (DASHBOARD_ADMIN_IDS.has(String(chatId))) {
+      return true;
+    }
+
+    const subscription =
+      readPaymentsState().subscriptions[String(chatId)];
+
+    const activeUntil = subscription
+      ? new Date(subscription.activeUntil).getTime()
+      : NaN;
+
+    return Number.isFinite(activeUntil) && activeUntil > Date.now();
+  }
 
   // --- Dashboard: pause / resume cloud mining ---
   // The tick only picks up miners whose status is "active", so pausing is just
@@ -2015,6 +4048,15 @@ app.use(express.static(path.join(process.cwd(), "public")));
   function setMinerRunning(req: any, res: any, shouldRun: boolean) {
     const chatId = req.telegramId;
     const walletName = String(req.body?.walletName || "").trim();
+
+    if (shouldRun && !hasDashboardMiningAccess(chatId)) {
+      res.status(403).json({
+        ok: false,
+        error: "SUBSCRIPTION_REQUIRED",
+      });
+      return;
+    }
+
     const state = readBeeMinerState();
 
     const record = state.miners.find(
@@ -2142,6 +4184,14 @@ app.use(express.static(path.join(process.cwd(), "public")));
       return;
     }
 
+    if (!hasDashboardMiningAccess(chatId)) {
+      res.status(403).json({
+        ok: false,
+        error: "SUBSCRIPTION_REQUIRED",
+      });
+      return;
+    }
+
     try {
       const state = readBeeMinerState();
       const id = `${chatId}:${walletName}`;
@@ -2209,6 +4259,14 @@ app.use(express.static(path.join(process.cwd(), "public")));
     const chatId = req.telegramId;
     const walletName = String(req.body?.walletName || "").trim();
 
+    if (!hasDashboardMiningAccess(chatId)) {
+      res.status(403).json({
+        ok: false,
+        error: "SUBSCRIPTION_REQUIRED",
+      });
+      return;
+    }
+
     const state = readBeeMinerState();
     const record = state.miners.find(
       (m) => m.chatId === chatId && m.walletName === walletName && m.status === "pending_authorization",
@@ -2244,11 +4302,34 @@ app.use(express.static(path.join(process.cwd(), "public")));
       // The isolated Bee worker performs the first real session. Keeping
       // verification out of the web process prevents duplicate event readers.
 
-      record.status = "active";
+      // A plan covers one mining wallet. Connecting another wallet is valid,
+      // but it must land paused when this account already has an active miner.
+      // The Bee scheduler independently enforces the same rule as a final guard.
+      const alreadyMining =
+        !DASHBOARD_ADMIN_IDS.has(String(chatId)) &&
+        state.miners.some(
+          (miner) =>
+            miner.chatId === chatId &&
+            miner.id !== record.id &&
+            miner.status === "active",
+        );
+
+      record.status = alreadyMining ? "stopped" : "active";
       record.lastError = null;
       writeBeeMinerState(state);
 
-      res.json({ ok: true, status: "active" });
+      console.log("Dashboard miner connection confirmed:", {
+        chatId,
+        walletName,
+        status: record.status,
+        alreadyMining,
+      });
+
+      res.json({
+        ok: true,
+        status: record.status,
+        paused: alreadyMining,
+      });
     } catch (error) {
       // Logged, not just returned. This swallowed the reason silently, so a
       // wallet that would not connect gave the operator nothing to go on.
@@ -2798,22 +4879,29 @@ app.use(express.static(path.join(process.cwd(), "public")));
     });
   });
 
-app.get("/api/acki/network", async (_req, res) => {
-  try {
-    const network = await getAckiNetworkStats();
+app.get("/api/acki/network", (_req, res) => {
+  const snapshot = lastGoodChainStats;
 
-    res.json({
-      ok: true,
-      network,
-    });
-  } catch (error) {
-    console.error("Acki network endpoint error:", error);
-
-    res.status(502).json({
+  // Network stats are sampled centrally by startTpsSampler().
+  // HTTP traffic must never create its own provider / GraphQL request.
+  if (!snapshot) {
+    res.status(503).json({
       ok: false,
-      error: "ACKI_NETWORK_UNAVAILABLE",
+      error: "ACKI_NETWORK_CACHE_EMPTY",
+      cached: true,
     });
+    return;
   }
+
+  const ageMs = Math.max(0, Date.now() - snapshot.atMs);
+
+  res.json({
+    ok: true,
+    network: snapshot.data,
+    cached: true,
+    stale: ageMs > CHAIN_STATS_MAX_STALE_MS,
+    ageSeconds: Math.round(ageMs / 1000),
+  });
 });
 
 app.get("/api/acki/wallet/:input", async (req, res) => {
