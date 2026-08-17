@@ -10,3 +10,7 @@ node_modules/
 
 # pm2 / npm logs if ever written locally
 *.log
+
+# One-off source snapshots are preserved by the dated system backup, not Git.
+*.bak-*
+*.before-*

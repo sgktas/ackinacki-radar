@@ -45,6 +45,69 @@ const DASHBOARD_ADMIN_IDS = new Set(
     .filter(Boolean),
 );
 
+const DASHBOARD_ALLOWED_ORIGINS = [
+  "https://ackinackiradar.com",
+  "https://www.ackinackiradar.com",
+];
+
+type RateLimitBucket = {
+  count: number;
+  resetAt: number;
+};
+
+function createRateLimiter(options: {
+  maxRequests: number;
+  windowMs: number;
+  scope: string;
+}) {
+  const buckets = new Map<string, RateLimitBucket>();
+
+  const cleanupTimer = setInterval(() => {
+    const now = Date.now();
+
+    for (const [key, bucket] of buckets.entries()) {
+      if (bucket.resetAt <= now) buckets.delete(key);
+    }
+  }, options.windowMs);
+
+  cleanupTimer.unref();
+
+  return (req: any, res: any, next: any) => {
+    const now = Date.now();
+    const clientAddress = String(
+      req.ip || req.socket?.remoteAddress || "unknown",
+    );
+    const key = `${options.scope}:${clientAddress}`;
+    const current = buckets.get(key);
+    const bucket =
+      !current || current.resetAt <= now
+        ? { count: 0, resetAt: now + options.windowMs }
+        : current;
+
+    bucket.count += 1;
+    buckets.set(key, bucket);
+
+    const remaining = Math.max(0, options.maxRequests - bucket.count);
+    res.setHeader("RateLimit-Limit", String(options.maxRequests));
+    res.setHeader("RateLimit-Remaining", String(remaining));
+    res.setHeader(
+      "RateLimit-Reset",
+      String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))),
+    );
+
+    if (bucket.count > options.maxRequests) {
+      res.setHeader(
+        "Retry-After",
+        String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))),
+      );
+      res.status(429).json({ ok: false, error: "RATE_LIMITED" });
+      return;
+    }
+
+    next();
+  };
+}
+
 const TON_PAYMENTS_ADDRESS = String(process.env.TON_PAYMENTS_ADDRESS || "").trim();
 const TON_PAYMENTS_CHECK_ENABLED =
   String(process.env.TON_PAYMENTS_CHECK_ENABLED || "false").toLowerCase() ===
@@ -2839,9 +2902,44 @@ function telegramIdFromClaims(claims: Record<string, any>): number | null {
 export function startServer(port: number) {
   const app = express();
 
-  app.use(cors());
+  app.disable("x-powered-by");
+
+  // Nginx is the only trusted reverse proxy. This makes req.ip reflect the
+  // real client address for rate limiting without trusting arbitrary peers.
+  app.set("trust proxy", "loopback");
+
+  app.use(
+    cors({
+      origin: DASHBOARD_ALLOWED_ORIGINS,
+      methods: ["GET", "HEAD", "POST", "OPTIONS"],
+    }),
+  );
   app.use(express.json());
-app.use(express.static(path.join(process.cwd(), "public")));
+  app.use(
+    "/api",
+    createRateLimiter({
+      maxRequests: 300,
+      windowMs: 60 * 1000,
+      scope: "api",
+    }),
+  );
+  app.use(
+    "/api/auth",
+    createRateLimiter({
+      maxRequests: 30,
+      windowMs: 60 * 1000,
+      scope: "auth",
+    }),
+  );
+  app.use(
+    "/api/admin",
+    createRateLimiter({
+      maxRequests: 120,
+      windowMs: 60 * 1000,
+      scope: "admin",
+    }),
+  );
+  app.use(express.static(path.join(process.cwd(), "public")));
 
   // --- Dashboard auth ---
   app.post("/api/auth/telegram", (req, res) => {
@@ -5099,7 +5197,7 @@ app.post("/api/tasks/:telegramId/:taskId/complete", requireUserAuth, (req: any, 
     task,
   });
 });
-  app.listen(port, () => {
+  app.listen(port, "127.0.0.1", () => {
     console.log("Web server çalışıyor: http://localhost:" + port);
     startTpsSampler();
 
