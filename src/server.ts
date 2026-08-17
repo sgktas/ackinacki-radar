@@ -337,7 +337,7 @@ type TpsHistory = { samples: TpsSample[]; hourly: TpsHourly[] };
 
 const tpsHistoryFile = path.join(process.cwd(), "data", "tps-history.json");
 const TPS_SAMPLE_INTERVAL_MS = 60 * 1000;
-const TPS_BEE_CRITICAL_REFRESH_MS = 5 * 60 * 1000;
+const TPS_BEE_CRITICAL_REFRESH_MS = 2 * 60 * 1000;
 const TPS_RAW_RETENTION_MS = 24 * 60 * 60 * 1000;
 const TPS_HOURLY_RETENTION_HOURS = 30 * 24;
 
@@ -496,7 +496,7 @@ function getTpsHistorySummary() {
 // adding more pressure to an already exhausted public connection pool.
 function startTpsSampler() {
   const FIRST_DELAY_MS = 5000;
-  const MAX_FAILURE_BACKOFF_MS = 5 * 60 * 1000;
+  const MAX_FAILURE_BACKOFF_MS = 2 * 60 * 1000;
 
   const tick = async () => {
     const startedAt = Date.now();
@@ -527,9 +527,9 @@ function startTpsSampler() {
         }
       } else {
         chainStatsLastBlockedByBee = true;
-        // The normal one-minute tick may land just before the five-minute
+        // The normal one-minute tick may land just before the two-minute
         // boundary. Wake again at the exact boundary instead of slipping the
-        // real request into the sixth minute.
+        // real request into the following minute.
         targetIntervalMs = Math.min(
           targetIntervalMs,
           Math.max(
@@ -547,7 +547,10 @@ function startTpsSampler() {
       );
       // Small jitter prevents this process from repeatedly landing on the same
       // busy boundary as other public-index consumers.
-      targetIntervalMs = Math.round(baseBackoffMs * (0.9 + Math.random() * 0.2));
+      targetIntervalMs = Math.min(
+        MAX_FAILURE_BACKOFF_MS,
+        Math.round(baseBackoffMs * (0.9 + Math.random() * 0.2)),
+      );
 
       if (chainStatsConsecutiveFailures === 1 || chainStatsConsecutiveFailures % 3 === 0) {
         console.warn("TPS sampler GraphQL backoff:", {
