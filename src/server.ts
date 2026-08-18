@@ -2133,6 +2133,11 @@ function readBeeMiningHealth(minerIds: Set<string>) {
         | "pending"
         | "lost";
 
+      const sessionClaimState =
+        claims.get(
+          `${String(session.minerId || "")}:${String(session.epoch5mStart || "")}`,
+        );
+
       if (
         session.result ===
         "healthy"
@@ -2144,6 +2149,16 @@ function readBeeMiningHealth(minerIds: Set<string>) {
           ) > 0
             ? "recovered"
             : "healthy";
+
+      // A collected claim is chain-side proof that an earlier ambiguous
+      // submission was accepted. Reconcile that final result instead of
+      // leaving the session permanently in the dashboard's pending bucket.
+      } else if (
+        sessionClaimState ===
+        "collected"
+      ) {
+        healthStatus =
+          "recovered";
 
       } else {
         const tapDelta =
@@ -2394,10 +2409,13 @@ function readBeeMiningHealth(minerIds: Set<string>) {
     const total =
       confirmed + pending + lost;
 
+    const finalized =
+      confirmed + lost;
+
     const successRate =
-      total > 0
+      finalized > 0
         ? Number(
-            ((confirmed / total) * 100).toFixed(2),
+            ((confirmed / finalized) * 100).toFixed(2),
           )
         : null;
 
