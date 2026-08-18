@@ -6314,7 +6314,7 @@ async function runTonPaymentsCheckTick(bot: Telegraf<any>) {
         (item) => item.id !== invoice.id,
       );
       appendPaymentHistory(state, {
-        id: `ton:${transfer.lt}:${invoice.id}`,
+        id: `ton:${transfer.eventId || transfer.lt}:${invoice.id}`,
         status: "confirmed",
         source: transfer.currency === "ton" ? "ton" : "usdt",
         chatId: invoice.chatId,
@@ -6322,8 +6322,8 @@ async function runTonPaymentsCheckTick(bot: Telegraf<any>) {
         invoiceId: invoice.id,
         amountRaw: transfer.amountRaw,
         currency: transfer.currency,
-        transactionId: String(transfer.lt),
-        senderAddress: String((transfer as any).src || (transfer as any).source || "") || null,
+        transactionId: transfer.eventId || String(transfer.lt),
+        senderAddress: transfer.senderAddress || null,
         invoiceCreatedAt: invoice.createdAt,
         recordedAt: new Date().toISOString(),
         activeUntil,
