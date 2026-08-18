@@ -1823,6 +1823,24 @@ type Subscription = {
   trial?: boolean;
 };
 
+type PaymentHistoryEntry = {
+  id: string;
+  status: "confirmed" | "manual_grant" | "invoice_deleted";
+  source: "nackl" | "ton" | "usdt" | "shell" | "stars" | "admin";
+  chatId: number;
+  planId: string;
+  invoiceId?: string | null;
+  amountRaw?: string | null;
+  currency?: string | null;
+  transactionId?: string | null;
+  senderAddress?: string | null;
+  invoiceCreatedAt?: string | null;
+  recordedAt: string;
+  activeUntil?: string | null;
+  adminTelegramId?: number | null;
+  note?: string | null;
+};
+
 type ReferralProfile = {
   code: string;
   createdAt: string;
@@ -1848,6 +1866,7 @@ type PaymentsState = {
   trialUsed?: number[];
   starsCharges?: string[];
   tonLastLt?: number;
+  paymentHistory?: PaymentHistoryEntry[];
 
   // REFERRAL BACKEND STEP1
   referralProfiles?: Record<string, ReferralProfile>;
@@ -2603,10 +2622,38 @@ function readPaymentsState(): PaymentsState {
     nacklBaselineReady: parsed?.nacklBaselineReady === true,
     trialUsed: Array.isArray(parsed?.trialUsed) ? parsed.trialUsed : [],
     starsCharges: Array.isArray(parsed?.starsCharges) ? parsed.starsCharges : [],
+    paymentHistory: Array.isArray(parsed?.paymentHistory)
+      ? parsed.paymentHistory
+      : [],
     tonLastLt: Number.isFinite(Number(parsed?.tonLastLt))
       ? Number(parsed.tonLastLt)
       : 0,
   };
+}
+
+function appendPaymentHistory(
+  state: PaymentsState,
+  entry: PaymentHistoryEntry,
+): void {
+  const history = Array.isArray(state.paymentHistory) ? state.paymentHistory : [];
+  if (history.some((item) => item.id === entry.id)) return;
+  state.paymentHistory = [...history, entry].slice(-500);
+}
+
+function formatAdminPaymentAmount(
+  amountRaw: unknown,
+  currency: unknown,
+): string | null {
+  if (amountRaw == null) return null;
+  const raw = String(amountRaw);
+  try {
+    if (currency === "nackl") return formatNacklAmount(raw);
+    if (currency === "ton") return formatTonAmount(raw);
+    if (currency === "usdt") return formatUsdtAmount(raw);
+  } catch {
+    // Preserve the raw amount if an old record has an unexpected format.
+  }
+  return raw;
 }
 
 function writePaymentsState(state: PaymentsState) {
@@ -5092,6 +5139,25 @@ export function startServer(port: number) {
       }),
     );
 
+    const userByChatId = new Map<number, UserRecord>();
+    for (const user of users) userByChatId.set(Number(user.telegramId), user);
+    const walletsByChatId = new Map<number, string[]>();
+    for (const miner of minerState.miners) {
+      const chatId = Number(miner.chatId);
+      const names = walletsByChatId.get(chatId) || [];
+      if (miner.walletName && !names.includes(miner.walletName)) names.push(miner.walletName);
+      walletsByChatId.set(chatId, names);
+    }
+    const paymentParty = (chatIdValue: unknown) => {
+      const chatId = Number(chatIdValue);
+      const user = userByChatId.get(chatId);
+      return {
+        telegramUsername: user?.username ?? null,
+        telegramFirstName: user?.firstName ?? null,
+        walletNames: walletsByChatId.get(chatId) || [],
+      };
+    };
+
     res.json({
       ok: true,
       users: {
@@ -5134,16 +5200,34 @@ export function startServer(port: number) {
       payments: {
         pendingInvoices: (payments.pendingInvoices || []).length,
         starsCharges: ((payments as any).starsCharges || []).length,
+        historyCount: (payments.paymentHistory || []).length,
+        confirmedCount: (payments.paymentHistory || []).filter(
+          (item) => item.status === "confirmed",
+        ).length,
         tonLastLt: (payments as any).tonLastLt ?? 0,
         pendingInvoiceList: (payments.pendingInvoices || []).map((inv: any) => ({
+          id: inv.id ?? null,
           chatId: inv.chatId ?? null,
+          ...paymentParty(inv.chatId),
           planId: inv.planId ?? null,
           code: inv.code ?? null,
           amount: inv.amount ?? inv.amountRaw ?? null,
+          amountFormatted: formatAdminPaymentAmount(
+            inv.amount ?? inv.amountRaw,
+            inv.currency,
+          ),
           currency: inv.currency ?? null,
           createdAt: inv.createdAt ?? null,
           expiresAt: inv.expiresAt ?? null,
         })),
+        historyList: (payments.paymentHistory || [])
+          .slice(-200)
+          .reverse()
+          .map((item) => ({
+            ...item,
+            ...paymentParty(item.chatId),
+            amountFormatted: formatAdminPaymentAmount(item.amountRaw, item.currency),
+          })),
         starsChargeList: ((payments as any).starsCharges || []).slice(-100),
         trialUsedList: ((payments as any).trialUsed || []),
       },
@@ -5200,6 +5284,111 @@ export function startServer(port: number) {
     res.json({ ok: true });
   });
 
+  app.post("/api/admin/payment/invoice/delete", requireAdminAuth, (req: any, res) => {
+    const invoiceId = String(req.body?.invoiceId || "").trim();
+    if (!invoiceId || invoiceId.length > 256) {
+      res.status(400).json({ ok: false, error: "INVALID_INVOICE_ID" });
+      return;
+    }
+
+    const state = readPaymentsState();
+    const invoice = state.pendingInvoices.find((item) => item.id === invoiceId);
+    if (!invoice) {
+      res.status(404).json({ ok: false, error: "INVOICE_NOT_FOUND" });
+      return;
+    }
+
+    state.pendingInvoices = state.pendingInvoices.filter((item) => item.id !== invoiceId);
+    appendPaymentHistory(state, {
+      id: `invoice-deleted:${invoice.id}:${Date.now()}`,
+      status: "invoice_deleted",
+      source: "admin",
+      chatId: invoice.chatId,
+      planId: invoice.planId,
+      invoiceId: invoice.id,
+      amountRaw: invoice.amountRaw,
+      currency: invoice.currency || "shell",
+      transactionId: null,
+      senderAddress: null,
+      invoiceCreatedAt: invoice.createdAt,
+      recordedAt: new Date().toISOString(),
+      activeUntil: null,
+      adminTelegramId: Number(req.telegramId),
+      note: "Bekleyen fatura admin panelinden silindi",
+    });
+    writePaymentsState(state);
+
+    console.log("Admin deleted pending invoice:", {
+      byAdmin: req.telegramId,
+      invoiceId: invoice.id,
+      chatId: invoice.chatId,
+      planId: invoice.planId,
+    });
+    res.json({ ok: true });
+  });
+
+  app.post("/api/admin/payment/invoice/grant", requireAdminAuth, (req: any, res) => {
+    const invoiceId = String(req.body?.invoiceId || "").trim();
+    if (!invoiceId || invoiceId.length > 256) {
+      res.status(400).json({ ok: false, error: "INVALID_INVOICE_ID" });
+      return;
+    }
+
+    const state = readPaymentsState();
+    const invoice = state.pendingInvoices.find((item) => item.id === invoiceId);
+    if (!invoice) {
+      res.status(404).json({ ok: false, error: "INVOICE_NOT_FOUND" });
+      return;
+    }
+    const plan = getPlanById(invoice.planId);
+    if (!plan) {
+      res.status(400).json({ ok: false, error: "PLAN_NOT_FOUND" });
+      return;
+    }
+
+    const existing = state.subscriptions[String(invoice.chatId)];
+    const base =
+      existing && new Date(existing.activeUntil).getTime() > Date.now()
+        ? new Date(existing.activeUntil).getTime()
+        : Date.now();
+    const activeUntil = new Date(
+      base + plan.days * 24 * 60 * 60 * 1000,
+    ).toISOString();
+
+    state.subscriptions[String(invoice.chatId)] = {
+      planId: plan.id,
+      activeUntil,
+    };
+    state.pendingInvoices = state.pendingInvoices.filter((item) => item.id !== invoiceId);
+    appendPaymentHistory(state, {
+      id: `manual-invoice:${invoice.id}:${Date.now()}`,
+      status: "manual_grant",
+      source: "admin",
+      chatId: invoice.chatId,
+      planId: plan.id,
+      invoiceId: invoice.id,
+      amountRaw: invoice.amountRaw,
+      currency: invoice.currency || "shell",
+      transactionId: null,
+      senderAddress: null,
+      invoiceCreatedAt: invoice.createdAt,
+      recordedAt: new Date().toISOString(),
+      activeUntil,
+      adminTelegramId: Number(req.telegramId),
+      note: "Fatura admin panelinden manuel onaylandı; zincir ödemesi doğrulanmadı",
+    });
+    writePaymentsState(state);
+
+    console.log("Admin manually granted invoice subscription:", {
+      byAdmin: req.telegramId,
+      invoiceId: invoice.id,
+      chatId: invoice.chatId,
+      planId: plan.id,
+      activeUntil,
+    });
+    res.json({ ok: true, activeUntil });
+  });
+
   // Repair action: grant days to an account by hand — for a payment that
   // arrived without a usable code, or an apology.
   app.post("/api/admin/subscription/grant", requireAdminAuth, (req: any, res) => {
@@ -5223,6 +5412,23 @@ export function startServer(port: number) {
     ).toISOString();
 
     state.subscriptions[String(chatId)] = { planId, activeUntil } as any;
+    appendPaymentHistory(state, {
+      id: `manual-grant:${chatId}:${Date.now()}`,
+      status: "manual_grant",
+      source: "admin",
+      chatId,
+      planId,
+      invoiceId: null,
+      amountRaw: null,
+      currency: null,
+      transactionId: null,
+      senderAddress: null,
+      invoiceCreatedAt: null,
+      recordedAt: new Date().toISOString(),
+      activeUntil,
+      adminTelegramId: Number(req.telegramId),
+      note: `${days} gün admin panelinden manuel verildi`,
+    });
     writePaymentsState(state);
 
     console.log("Admin granted subscription:", {

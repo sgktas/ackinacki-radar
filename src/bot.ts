@@ -583,6 +583,24 @@ type Subscription = {
   trial?: boolean;
 };
 
+type PaymentHistoryEntry = {
+  id: string;
+  status: "confirmed" | "manual_grant" | "invoice_deleted";
+  source: "nackl" | "ton" | "usdt" | "shell" | "stars" | "admin";
+  chatId: number;
+  planId: string;
+  invoiceId?: string | null;
+  amountRaw?: string | null;
+  currency?: string | null;
+  transactionId?: string | null;
+  senderAddress?: string | null;
+  invoiceCreatedAt?: string | null;
+  recordedAt: string;
+  activeUntil?: string | null;
+  adminTelegramId?: number | null;
+  note?: string | null;
+};
+
 type PaymentsState = {
   lastCheckedBalanceRaw: string | null;
   pendingInvoices: PendingInvoice[];
@@ -610,6 +628,10 @@ type PaymentsState = {
   // Highest TON logical time already processed. `lt` is monotonic per account,
   // so it is a reliable cursor: everything at or below it has been handled.
   tonLastLt?: number;
+  // Durable audit trail shown in the admin panel. This records the party and
+  // real chain transaction at credit time instead of trying to reconstruct it
+  // later from a disappearing pending invoice.
+  paymentHistory?: PaymentHistoryEntry[];
 
   // REFERRAL QUALIFICATION STEP3
   referralProfiles?: Record<
@@ -695,7 +717,19 @@ function readPaymentsState(): PaymentsState {
       : 0,
     trialUsed: Array.isArray(parsed?.trialUsed) ? parsed.trialUsed : [],
     starsCharges: Array.isArray(parsed?.starsCharges) ? parsed.starsCharges : [],
+    paymentHistory: Array.isArray(parsed?.paymentHistory)
+      ? parsed.paymentHistory
+      : [],
   };
+}
+
+function appendPaymentHistory(
+  state: PaymentsState,
+  entry: PaymentHistoryEntry,
+): void {
+  const history = Array.isArray(state.paymentHistory) ? state.paymentHistory : [];
+  if (history.some((item) => item.id === entry.id)) return;
+  state.paymentHistory = [...history, entry].slice(-500);
 }
 
 // Plans that a Stars invoice may have been issued for. Wider than
@@ -6279,6 +6313,21 @@ async function runTonPaymentsCheckTick(bot: Telegraf<any>) {
       state.pendingInvoices = state.pendingInvoices.filter(
         (item) => item.id !== invoice.id,
       );
+      appendPaymentHistory(state, {
+        id: `ton:${transfer.lt}:${invoice.id}`,
+        status: "confirmed",
+        source: transfer.currency === "ton" ? "ton" : "usdt",
+        chatId: invoice.chatId,
+        planId: plan.id,
+        invoiceId: invoice.id,
+        amountRaw: transfer.amountRaw,
+        currency: transfer.currency,
+        transactionId: String(transfer.lt),
+        senderAddress: String((transfer as any).src || (transfer as any).source || "") || null,
+        invoiceCreatedAt: invoice.createdAt,
+        recordedAt: new Date().toISOString(),
+        activeUntil,
+      });
       credited += 1;
 
       console.log("TON payments: subscription activated:", {
@@ -6496,6 +6545,21 @@ async function runNacklPaymentsCheckTick(bot: Telegraf<any>) {
       state.pendingInvoices = state.pendingInvoices.filter(
         (item) => item.id !== invoice.id,
       );
+      appendPaymentHistory(state, {
+        id: `nackl:${transfer.id}`,
+        status: "confirmed",
+        source: "nackl",
+        chatId: invoice.chatId,
+        planId: plan.id,
+        invoiceId: invoice.id,
+        amountRaw: transfer.nacklValueRaw,
+        currency: "nackl",
+        transactionId: transfer.id,
+        senderAddress: transfer.src || null,
+        invoiceCreatedAt: invoice.createdAt,
+        recordedAt: new Date().toISOString(),
+        activeUntil,
+      });
       credited += 1;
 
       console.log("NACKL payments: subscription activated:", {
@@ -6722,6 +6786,21 @@ async function runPaymentsCheckTickSenderBased(
     state.pendingInvoices = state.pendingInvoices.filter(
       (item) => item.id !== matchedInvoice.id,
     );
+    appendPaymentHistory(state, {
+      id: `shell:${transfer.id}`,
+      status: "confirmed",
+      source: "shell",
+      chatId,
+      planId: plan.id,
+      invoiceId: matchedInvoice.id,
+      amountRaw: transfer.shellValueRaw,
+      currency: "shell",
+      transactionId: transfer.id,
+      senderAddress: transfer.src,
+      invoiceCreatedAt: matchedInvoice.createdAt,
+      recordedAt: new Date().toISOString(),
+      activeUntil,
+    });
 
     console.log("Payments check (sender-based): matched invoice:", {
       chatId,
@@ -6823,6 +6902,22 @@ async function runPaymentsCheckTickBalanceDiff(
         state.pendingInvoices = state.pendingInvoices.filter(
           (item) => item.id !== invoice.id,
         );
+        appendPaymentHistory(state, {
+          id: `shell-balance:${invoice.id}:${now}`,
+          status: "confirmed",
+          source: "shell",
+          chatId: invoice.chatId,
+          planId: plan.id,
+          invoiceId: invoice.id,
+          amountRaw: invoice.amountRaw,
+          currency: "shell",
+          transactionId: null,
+          senderAddress: null,
+          invoiceCreatedAt: invoice.createdAt,
+          recordedAt: new Date().toISOString(),
+          activeUntil,
+          note: "Toplam cüzdan bakiyesi farkından eşleştirildi",
+        });
 
         try {
           await bot.telegram.sendMessage(
@@ -7771,6 +7866,21 @@ export async function startBot(botToken: string) {
       ...(state.starsCharges ?? []),
       chargeId,
     ].slice(-500);
+    appendPaymentHistory(state, {
+      id: `stars:${chargeId}`,
+      status: "confirmed",
+      source: "stars",
+      chatId,
+      planId: plan.id,
+      invoiceId: null,
+      amountRaw: String(totalAmount),
+      currency: "stars",
+      transactionId: chargeId,
+      senderAddress: null,
+      invoiceCreatedAt: null,
+      recordedAt: new Date().toISOString(),
+      activeUntil,
+    });
 
     writePaymentsState(state);
 
