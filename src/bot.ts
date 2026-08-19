@@ -8009,11 +8009,7 @@ export async function startBot(botToken: string) {
     const state = readPaymentsState();
 
     if ((state.trialUsed ?? []).includes(chatId)) {
-      await ctx.reply(
-        ["You have already used your free trial.", "", "Plans: /plans"].join(
-          "\n",
-        ),
-      );
+      await ctx.reply("You have already used your free trial.");
       return;
     }
 
