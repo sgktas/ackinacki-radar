@@ -2635,11 +2635,7 @@ const MENU_TRIAL = "🎁 3-Day Trial";
 const MENU_WALLETS = "👛 Wallets";
 const MENU_PANEL = "🌐 Dashboard";
 const MENU_HELP = "ℹ️ Help";
-const MENU_START = "🏠 Start";
-const MENU_INFO = "🔍 Wallet Info";
-const MENU_RADAR_WALLETS = "📡 Radar Wallets";
-const MENU_EPOCH = "⏱ Epoch";
-const DASHBOARD_MINI_APP_URL = "https://ackinackiradar.com/cloud-miner";
+const DASHBOARD_MINI_APP_URL = "https://ackinackiradar.com/";
 
 // The bot's one job is selling with Telegram Stars. Mining management, wallet
 // lookup and status all live on the dashboard, which already has the endpoints
@@ -2732,10 +2728,9 @@ async function sendWalletsScreen(ctx: any) {
 
 function buildMainKeyboard() {
   return Markup.keyboard([
-    [MENU_INFO, MENU_RADAR_WALLETS],
-    [MENU_EPOCH, MENU_WALLETS],
-    [MENU_TRIAL, MENU_PLANS],
-    [MENU_START, MENU_HELP],
+    ["/start", "/info"],
+    ["/radar_wallets"],
+    ["/epoch", "/help"],
   ]).resize();
 }
 
@@ -2770,14 +2765,14 @@ function buildHowToUseMessage() {
   return [
     "📖 How it works",
     "",
-    `1) Try it free \u2014 tap "${MENU_TRIAL}" below (${TRIAL_DAYS} days, no payment needed).`,
-    "2) Open the dashboard: https://ackinackiradar.com",
+    `1) Try it free with /trial (${TRIAL_DAYS} days, no payment needed).`,
+    "2) Open the Dashboard button on the left.",
     "3) Press \u201cTelegram ile devam et\u201d to sign in with this same account.",
     "4) Enter your Acki Nacki wallet name and press Connect.",
     "5) Approve the request in your wallet app, then press Check \u2014 mining starts automatically once connected.",
     "",
-    `Prefer Telegram? Use "${MENU_WALLETS}" to manage wallets or "${MENU_PLANS}" to see paid plans.`,
-    `Need help any time \u2014 tap "${MENU_HELP}".`,
+    "Prefer Telegram? Open the keyboard on the right for the command menu.",
+    "Need help any time — use /help.",
   ].join("\n");
 }
 
@@ -9302,20 +9297,6 @@ export async function startBot(botToken: string) {
 
   bot.hears(MENU_WALLETS, async (ctx) => {
     await sendWalletsScreen(ctx);
-  });
-
-  // The Telegram system menu button is now the Dashboard Mini App. Keep the
-  // former command-menu actions reachable from the reply keyboard on the
-  // right side of the composer, without making users type slash commands.
-  bot.hears(MENU_START, async (ctx) => {
-    await ctx.reply(buildWelcomeMessage(), buildMainKeyboard());
-    await ctx.reply(buildHowToUseMessage());
-  });
-
-  bot.hears(MENU_INFO, replyWalletInfo);
-  bot.hears(MENU_RADAR_WALLETS, replyForgetWallet);
-  bot.hears(MENU_EPOCH, async (ctx) => {
-    await ctx.reply(buildEpochClockText());
   });
 
   // Start / pause from the wallets screen.
