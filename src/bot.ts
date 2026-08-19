@@ -2629,6 +2629,12 @@ function findUserByTelegramId(telegramId: number) {
 // Sent verbatim with force_reply and compared verbatim when the answer comes
 // back, so the two must stay identical — hence a constant, not a literal.
 const WALLET_ADD_PROMPT = "Send the Acki Nacki wallet name you want to connect:";
+const WALLET_INFO_PROMPT = [
+  "🔍 Cüzdan Bilgisi",
+  "",
+  "Acki Nacki cüzdan adını veya 0: ile başlayan adresini gönder.",
+  "Örnek: ackerman",
+].join("\n");
 
 const MENU_PLANS = "⭐ Pay with Stars";
 const MENU_TRIAL = "🎁 3-Day Trial";
@@ -2693,6 +2699,52 @@ function buildEpochClockText(): string {
   return `⏱ Zincir epochu: ${clock.epochStart} · kalan ${formatEpochRemaining(clock.remainingSeconds - ageSeconds)}`;
 }
 
+const MINING_CYCLE_BLOCK_PERIOD = 262_000;
+const MINING_CYCLE_BLOCKS_PER_SECOND = 3.0;
+
+function buildMiningCycleRemainingText(): string {
+  const clock = getChainEpochClock();
+  if (!clock) {
+    return "⏳ Madencilik döngüsü: zincir saati senkronizasyon bekliyor.";
+  }
+
+  const observedAtMs = new Date(clock.observedAt).getTime();
+  const ageSeconds = Math.max(0, (Date.now() - observedAtMs) / 1000);
+  if (!Number.isFinite(ageSeconds) || ageSeconds > 10 * 60) {
+    return "⏳ Madencilik döngüsü: zincir saati yenileniyor.";
+  }
+
+  const projectedSeqNo = Math.floor(
+    clock.currentSeqNo + ageSeconds * MINING_CYCLE_BLOCKS_PER_SECOND,
+  );
+  const elapsedBlocks =
+    ((projectedSeqNo % MINING_CYCLE_BLOCK_PERIOD) +
+      MINING_CYCLE_BLOCK_PERIOD) %
+    MINING_CYCLE_BLOCK_PERIOD;
+  const remainingBlocks = Math.max(
+    0,
+    MINING_CYCLE_BLOCK_PERIOD - elapsedBlocks,
+  );
+  const remainingSeconds = Math.ceil(
+    remainingBlocks / MINING_CYCLE_BLOCKS_PER_SECOND,
+  );
+  const hours = Math.floor(remainingSeconds / 3600);
+  const minutes = Math.floor((remainingSeconds % 3600) / 60);
+  const progress = Math.min(
+    100,
+    Math.max(0, Math.round((elapsedBlocks / MINING_CYCLE_BLOCK_PERIOD) * 100)),
+  );
+  const endsAt = new Date(Date.now() + remainingSeconds * 1000);
+
+  return [
+    "⏳ Madencilik Döngüsü",
+    "",
+    `Kalan süre: ${hours} sa ${minutes} dk`,
+    `Döngü ilerlemesi: %${progress}`,
+    `Tahmini bitiş: ${endsAt.toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" })}`,
+  ].join("\n");
+}
+
 function buildWalletsText(miners: BeeMinerRecord[]) {
   if (!miners.length) {
     return [
@@ -2728,9 +2780,9 @@ async function sendWalletsScreen(ctx: any) {
 
 function buildMainKeyboard() {
   return Markup.keyboard([
-    ["/start", "/info"],
-    ["/radar_wallets"],
-    ["/epoch", "/help"],
+    ["/start 🚀", "/info 🔍"],
+    ["/epoch ⏳", "/trial 🎁"],
+    ["/help ℹ️"],
   ]).resize();
 }
 
@@ -3215,18 +3267,20 @@ async function sendSingleWalletInfo(ctx: any, input: string) {
   }
 }
 
-async function replyWalletInfo(ctx: any) {
-  const input = getCommandArgument(ctx.message?.text);
+async function replyWalletInfo(ctx: any, inputOverride?: string) {
+  const input = String(
+    inputOverride ?? getCommandArgument(ctx.message?.text),
+  ).trim();
 
-  if (!input) {
-    await ctx.reply(buildWalletInfoUsageMessage());
+  if (!input || input === "🔍") {
+    await ctx.reply(WALLET_INFO_PROMPT, Markup.forceReply());
     return;
   }
 
   const inputs = parseWalletInfoInputs(input);
 
   if (!inputs.length) {
-    await ctx.reply(buildWalletInfoUsageMessage());
+    await ctx.reply(WALLET_INFO_PROMPT, Markup.forceReply());
     return;
   }
 
@@ -7642,8 +7696,8 @@ export async function startBot(botToken: string) {
     }
   });
 
-  bot.command("info", replyWalletInfo);
-  bot.command("wallet", replyWalletInfo);
+  bot.command("info", async (ctx) => replyWalletInfo(ctx));
+  bot.command("wallet", async (ctx) => replyWalletInfo(ctx));
   bot.command("id", async (ctx) => {
     const chatId = ctx.chat?.id;
 
@@ -8645,7 +8699,7 @@ export async function startBot(botToken: string) {
   });
 
   bot.command("epoch", async (ctx) => {
-    await ctx.reply(buildEpochClockText());
+    await ctx.reply(buildMiningCycleRemainingText());
   });
 
   bot.command("miner_stop", async (ctx) => {
@@ -9440,6 +9494,24 @@ export async function startBot(botToken: string) {
     await ctx.reply(buildHelpMessage());
   });
 
+  // /info without an argument opens a force-reply input. Treat the answer as
+  // the command argument so keyboard users never have to edit a slash command.
+  bot.on("text", async (ctx, next) => {
+    const replyTo = (ctx.message as any)?.reply_to_message;
+
+    if (!replyTo || String(replyTo.text || "") !== WALLET_INFO_PROMPT) {
+      return next();
+    }
+
+    const input = String(ctx.message?.text || "").trim();
+    if (!input || input.startsWith("/")) {
+      await ctx.reply(WALLET_INFO_PROMPT, Markup.forceReply());
+      return;
+    }
+
+    await replyWalletInfo(ctx, input);
+  });
+
   // The "Add wallet" button asks with force_reply; this catches the answer.
   // Matching on the prompt text of the replied-to message is what Telegram
   // gives us — there is no per-request id on a force_reply.
@@ -9479,11 +9551,11 @@ export async function startBot(botToken: string) {
     // Deliberately NO mining command here — mining is managed on the
     // dashboard, and listing /miner_* in both places is what made the bot feel
     // like it had two competing menus. They still work when typed.
-    { command: "start", description: "Open the menu" },
-    { command: "info", description: "Look up a wallet" },
-    { command: "radar_wallets", description: "Radar records / remove one" },
-    { command: "epoch", description: "Show chain epoch countdown" },
-    { command: "help", description: "Help" },
+    { command: "start", description: "🚀 Open the menu" },
+    { command: "info", description: "🔍 Look up a wallet" },
+    { command: "epoch", description: "⏳ Mining cycle remaining" },
+    { command: "trial", description: "🎁 Start the 3-day trial" },
+    { command: "help", description: "ℹ️ Help" },
   ];
   const groupCommandList = [
     { command: "info", description: "Show wallet radar" },
