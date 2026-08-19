@@ -1384,6 +1384,98 @@ export async function getIncomingNacklTransfers(
   }));
 }
 
+export type PaymentWalletSnapshot = {
+  name: string | null;
+  address: string;
+  nativeBalanceFormatted: string;
+  tokens: AckiTokenBalance[];
+  lastTransactionLt: string | null;
+  incomingTransfers: Array<{
+    id: string;
+    src: string;
+    createdAt: number;
+    tokens: AckiTokenBalance[];
+  }>;
+  updatedAt: string;
+};
+
+// Admin payment-wallet view: balance and incoming token movements in one
+// GraphQL round trip. Keeping this separate from getAckiWalletActivity avoids
+// Popit/mining reads and prevents the 30-second admin refresh from competing
+// unnecessarily with the payment reconciliation worker.
+export async function getPaymentWalletSnapshot(
+  walletNameOrAddress: string,
+  limit = 25,
+): Promise<PaymentWalletSnapshot> {
+  const resolved = await resolveAckiWalletInput(walletNameOrAddress);
+  const safeLimit = Math.max(1, Math.min(50, Math.trunc(limit)));
+  const query = `
+    query GetPaymentWalletSnapshot($accountId: String!, $dappId: String!, $limit: Int!) {
+      blockchain {
+        account(account_id: $accountId, dapp_id: $dappId) {
+          info {
+            balance(format: DEC)
+            balance_other {
+              currency
+              value(format: DEC)
+            }
+            last_trans_lt(format: DEC)
+          }
+          messages(msg_type: [IntIn], last: $limit) {
+            edges {
+              node {
+                id
+                src
+                created_at
+                value_other {
+                  currency
+                  value(format: DEC)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const json = await postAckiGraphql<any>(query, {
+    accountId: resolved.accountId,
+    dappId: resolved.dappId,
+    limit: safeLimit,
+  });
+  const account = json?.data?.blockchain?.account;
+  const info = account?.info;
+  if (!info) throw new Error("ACKI_WALLET_NOT_FOUND");
+
+  const edges = Array.isArray(account?.messages?.edges)
+    ? account.messages.edges
+    : [];
+  const incomingTransfers = edges
+    .map((edge: any) => edge?.node)
+    .filter(Boolean)
+    .map((node: any) => ({
+      id: String(node.id || ""),
+      src: String(node.src || ""),
+      createdAt: Number(node.created_at) || 0,
+      tokens: mapTokenBalances(node.value_other).filter(
+        (token) => token.balanceRaw !== "0",
+      ),
+    }))
+    .filter((transfer: any) => transfer.id && transfer.tokens.length)
+    .sort((left: any, right: any) => right.createdAt - left.createdAt);
+
+  return {
+    name: resolved.name,
+    address: resolved.address,
+    nativeBalanceFormatted: formatTokenAmount(String(info.balance || "0"), 9),
+    tokens: mapTokenBalances(info.balance_other),
+    lastTransactionLt:
+      info.last_trans_lt == null ? null : String(info.last_trans_lt),
+    incomingTransfers,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export async function getAckiWalletActivity(input: string): Promise<AckiWalletActivity> {
   const resolved = await resolveAckiWalletInput(input);
   const cacheKey = resolved.address;

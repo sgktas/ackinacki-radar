@@ -4,7 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { getAckiNetworkStats, getAckiWalletActivity } from "./services/ackiProvider";
+import {
+  getAckiNetworkStats,
+  getAckiWalletActivity,
+  getPaymentWalletSnapshot,
+} from "./services/ackiProvider";
 import { isAdminTestModeOn, setAdminTestMode, sendAdminNotification } from "./bot";
 import {
   collectReward as beeCollectReward,
@@ -2925,6 +2929,37 @@ function buildReferralDashboardState(
 }
 
 const PAYMENTS_WALLET_NAME = process.env.PAYMENTS_WALLET_NAME || "ackinackiradarpayments";
+const ADMIN_PAYMENT_WALLET_CACHE_MS = 2 * 60 * 1000;
+const ADMIN_PAYMENT_WALLET_FORCE_COOLDOWN_MS = 15 * 1000;
+let adminPaymentWalletCache: {
+  fetchedAt: number;
+  data: Awaited<ReturnType<typeof getPaymentWalletSnapshot>>;
+} | null = null;
+let adminPaymentWalletInFlight:
+  | Promise<Awaited<ReturnType<typeof getPaymentWalletSnapshot>>>
+  | null = null;
+
+function readAdminPaymentWalletSnapshot() {
+  if (!adminPaymentWalletInFlight) {
+    adminPaymentWalletInFlight = getPaymentWalletSnapshot(PAYMENTS_WALLET_NAME, 25)
+      .then((data) => {
+        adminPaymentWalletCache = { fetchedAt: Date.now(), data };
+        return data;
+      })
+      .finally(() => {
+        adminPaymentWalletInFlight = null;
+      });
+  }
+  return adminPaymentWalletInFlight;
+}
+
+function adminPaymentWalletErrorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("pool timed out")) return "MAINNET_POOL_BUSY";
+  if (message.includes("timed out")) return "MAINNET_TIMEOUT";
+  if (message.includes("ACKI_WALLET_NOT_FOUND")) return "WALLET_NOT_FOUND";
+  return "MAINNET_UNAVAILABLE";
+}
 const NACKL_PAYMENTS_WALLET_NAME =
   process.env.NACKL_PAYMENTS_WALLET_NAME || PAYMENTS_WALLET_NAME;
 const NACKL_PAYMENTS_CHECK_ENABLED =
@@ -5248,6 +5283,68 @@ export function startServer(port: number) {
       },
       updatedAt: new Date().toISOString(),
     });
+  });
+
+  app.get("/api/admin/payment-wallet", requireAdminAuth, async (req: any, res) => {
+    const now = Date.now();
+    const forceRequested = String(req.query?.refresh || "") === "1";
+    const cacheAgeMs = adminPaymentWalletCache
+      ? now - adminPaymentWalletCache.fetchedAt
+      : Number.POSITIVE_INFINITY;
+    const forceAllowed =
+      forceRequested && cacheAgeMs >= ADMIN_PAYMENT_WALLET_FORCE_COOLDOWN_MS;
+
+    if (
+      adminPaymentWalletCache &&
+      !forceAllowed &&
+      cacheAgeMs < ADMIN_PAYMENT_WALLET_CACHE_MS
+    ) {
+      res.json({
+        ok: true,
+        status: "live",
+        stale: false,
+        cached: true,
+        fetchedAt: new Date(adminPaymentWalletCache.fetchedAt).toISOString(),
+        wallet: adminPaymentWalletCache.data,
+      });
+      return;
+    }
+
+    try {
+      const wallet = await readAdminPaymentWalletSnapshot();
+      res.json({
+        ok: true,
+        status: "live",
+        stale: false,
+        cached: false,
+        fetchedAt: new Date().toISOString(),
+        wallet,
+      });
+    } catch (error) {
+      const errorCode = adminPaymentWalletErrorCode(error);
+      console.warn("Admin payment wallet refresh failed:", { errorCode });
+
+      if (adminPaymentWalletCache) {
+        res.json({
+          ok: true,
+          status: "delayed",
+          stale: true,
+          cached: true,
+          error: errorCode,
+          fetchedAt: new Date(adminPaymentWalletCache.fetchedAt).toISOString(),
+          wallet: adminPaymentWalletCache.data,
+        });
+        return;
+      }
+
+      res.status(503).json({
+        ok: false,
+        status: "unavailable",
+        stale: true,
+        error: errorCode,
+        walletName: PAYMENTS_WALLET_NAME,
+      });
+    }
   });
 
   // Repair action: drop a miner record (and its stored keys) for any user.
