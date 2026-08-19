@@ -2827,7 +2827,20 @@ function buildMainMenu() {
   return Markup.inlineKeyboard(buttons);
 }
 
-function buildWelcomeMessage() {
+function buildWelcomeMessage(languageCode?: string) {
+  if (String(languageCode || "").toLowerCase().startsWith("tr")) {
+    return [
+      "📡 Acki Nacki Radar'a hoş geldiniz",
+      "",
+      "Cüzdan bilgileri, NACKL bakiyeleri, MBI seviyeleri ve Mainnet verilerini tek yerden takip edin.",
+      "",
+      "Web3Hunter tarafından geliştirilmiştir.",
+      "Resmî bir Acki Nacki platformu değildir.",
+      "",
+      "Başlamak için aşağıdaki adımları izleyin:",
+    ].join("\n");
+  }
+
   return [
     "📡 Welcome to Acki Nacki Radar",
     "",
@@ -2842,18 +2855,35 @@ function buildWelcomeMessage() {
 
 // Shown once, right after the welcome card, so a brand-new user sees the
 // whole login -> connect -> mine path before they have to guess at it.
-function buildHowToUseMessage() {
+function buildHowToUseMessage(languageCode?: string) {
+  if (String(languageCode || "").toLowerCase().startsWith("tr")) {
+    return [
+      "📖 Başlangıç Rehberi",
+      "",
+      `1) 🎁 /trial komutuyla ${TRIAL_DAYS} günlük ücretsiz hediyeni başlat. Ödeme gerekmez.`,
+      "2) Sol taraftaki Dashboard düğmesine bas. Mini App Telegram hesabını otomatik olarak tanır.",
+      "3) Dashboard üst menüsünden Cloud Miner bölümüne gir.",
+      "4) Acki Nacki cüzdan adını yaz ve Cüzdan Bağla düğmesine bas.",
+      "5) AN Wallet uygulamasını aç ve gelen madencilik anahtarı isteğini onayla.",
+      "6) Cloud Miner'a dön, Kontrol Et düğmesine bas ve doğrulama tamamlanınca Madenciliği Başlat.",
+      `7) ${TRIAL_DAYS} günlük hediye sona erdiğinde madenciliğe devam etmek için aktif bir plan satın alman gerekir. Planlar bölümünden Stars, USDT/TON veya NACKL ile ödeme yapabilirsin.`,
+      "",
+      "Yardıma ihtiyacın olursa /help komutunu kullan.",
+    ].join("\n");
+  }
+
   return [
-    "📖 How it works",
+    "📖 Getting Started",
     "",
-    `1) Try it free with /trial (${TRIAL_DAYS} days, no payment needed).`,
-    "2) Open the Dashboard button on the left.",
-    "3) Press \u201cTelegram ile devam et\u201d to sign in with this same account.",
-    "4) Enter your Acki Nacki wallet name and press Connect.",
-    "5) Approve the request in your wallet app, then press Check \u2014 mining starts automatically once connected.",
+    `1) 🎁 Start your free ${TRIAL_DAYS}-day gift with /trial. No payment is required.`,
+    "2) Press the Dashboard button on the left. The Mini App recognizes your Telegram account automatically.",
+    "3) Open Cloud Miner from the Dashboard menu.",
+    "4) Enter your Acki Nacki wallet name and press Connect Wallet.",
+    "5) Open AN Wallet and approve the mining-key request.",
+    "6) Return to Cloud Miner, press Check, then start mining after verification.",
+    `7) When the ${TRIAL_DAYS}-day gift ends, an active plan is required to continue mining. Buy one in Plans with Stars, USDT/TON or NACKL.`,
     "",
-    "Prefer Telegram? Open the keyboard on the right for the command menu.",
-    "Need help any time — use /help.",
+    "Need help? Use /help.",
   ].join("\n");
 }
 
@@ -7698,8 +7728,8 @@ export async function startBot(botToken: string) {
     // again; clear the flag so scheduled pushes resume for them.
     unmarkChatBlocked(from.id);
 
-    await ctx.reply(buildWelcomeMessage(), buildMainKeyboard());
-    await ctx.reply(buildHowToUseMessage());
+    await ctx.reply(buildWelcomeMessage(from.language_code), buildMainKeyboard());
+    await ctx.reply(buildHowToUseMessage(from.language_code));
 
     // Website search box deep link (ackinackiradar.com). Telegram caps
     // start payloads at 64 chars, [A-Za-z0-9_] only. A raw wallet address is
