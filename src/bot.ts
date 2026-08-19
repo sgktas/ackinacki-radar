@@ -2761,20 +2761,7 @@ function buildMiningCycleRemainingText(): string {
   );
   const hours = Math.floor(remainingSeconds / 3600);
   const minutes = Math.floor((remainingSeconds % 3600) / 60);
-  const progress = Math.min(
-    100,
-    Math.max(0, Math.round((elapsedBlocks / MINING_CYCLE_BLOCK_PERIOD) * 100)),
-  );
-  const endsAt = new Date(Date.now() + remainingSeconds * 1000);
-
-  return [
-    "⏳ Madencilik Döngüsü",
-    "",
-    `Kalan süre: ${hours} sa ${minutes} dk`,
-    `Döngü ilerlemesi: %${progress}`,
-    `Tahmini bitiş: ${endsAt.toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" })}`,
-    `Veri: ${dataAgeSeconds <= 120 ? "canlı" : "gecikmeli"}`,
-  ].join("\n");
+  return `⏳ Sonraki epoch'a kalan: ${hours} sa ${minutes} dk`;
 }
 
 function buildWalletsText(miners: BeeMinerRecord[]) {
