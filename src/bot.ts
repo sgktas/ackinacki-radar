@@ -2827,19 +2827,7 @@ function buildMainMenu() {
   return Markup.inlineKeyboard(buttons);
 }
 
-function buildWelcomeMessage(languageCode?: string) {
-  if (String(languageCode || "").toLowerCase().startsWith("tr")) {
-    return [
-      "📡 Acki Nacki Radar'a hoş geldiniz",
-      "",
-      "Cüzdan bilgilerini, NACKL bakiyelerini, MBI seviyelerini, Mainnet verilerini ve madencilik faaliyetlerini tek yerden takip edin.",
-      "",
-      "Resmî bir Acki Nacki platformu değildir.",
-      "",
-      "Başlamak için aşağıdaki adımları izleyin:",
-    ].join("\n");
-  }
-
+function buildWelcomeMessage(_languageCode?: string) {
   return [
     "📡 Welcome to Acki Nacki Radar",
     "",
@@ -2853,23 +2841,7 @@ function buildWelcomeMessage(languageCode?: string) {
 
 // Shown once, right after the welcome card, so a brand-new user sees the
 // whole login -> connect -> mine path before they have to guess at it.
-function buildHowToUseMessage(languageCode?: string) {
-  if (String(languageCode || "").toLowerCase().startsWith("tr")) {
-    return [
-      "📖 Başlangıç Rehberi",
-      "",
-      `1) 🎁 /trial komutuyla ${TRIAL_DAYS} günlük ücretsiz hediyeni başlat. Ödeme gerekmez.`,
-      "2) Sol taraftaki Dashboard düğmesine bas. Mini App Telegram hesabını otomatik olarak tanır.",
-      "3) Dashboard üst menüsünden Cloud Miner bölümüne gir.",
-      "4) Acki Nacki cüzdan adını yaz ve Cüzdan Bağla düğmesine bas.",
-      "5) AN Wallet uygulamasını aç ve gelen madencilik anahtarı isteğini onayla.",
-      "6) Cloud Miner'a dön, Kontrol Et düğmesine bas ve doğrulama tamamlanınca Madenciliği Başlat.",
-      `7) ${TRIAL_DAYS} günlük hediye sona erdiğinde madenciliğe devam etmek için aktif bir plan satın alman gerekir. Planlar bölümünden Stars, USDT/TON veya NACKL ile ödeme yapabilirsin.`,
-      "",
-      "Yardıma ihtiyacın olursa /help komutunu kullan.",
-    ].join("\n");
-  }
-
+function buildHowToUseMessage(_languageCode?: string) {
   return [
     "📖 Getting Started",
     "",
@@ -2885,40 +2857,7 @@ function buildHowToUseMessage(languageCode?: string) {
   ].join("\n");
 }
 
-function buildHelpMessage(languageCode?: string) {
-  if (String(languageCode || "").toLowerCase().startsWith("tr")) {
-    return [
-      "📡 Acki Nacki Radar — Yardım",
-      "",
-      "Acki Nacki cüzdanlarını, zincir verilerini ve madencilik döngüsünü tek yerden takip edin.",
-      "",
-      "Komutlar",
-      "",
-      "🚀 /start",
-      "Ana menüyü ve başlangıç rehberini açar.",
-      "",
-      "🔍 /info",
-      "Cüzdan adı veya 0: ile başlayan adresi sorgular; bakiye, MBI ve zincir bilgilerini gösterir.",
-      "",
-      "🎁 /trial",
-      `Ödeme gerektirmeden ${TRIAL_DAYS} günlük ücretsiz Cloud Miner hediyesini başlatır. Her hesap bir kez kullanabilir.`,
-      "",
-      "⏳ /epoch",
-      "Sonraki madencilik epoch'una kalan süreyi saat ve dakika olarak gösterir.",
-      "",
-      "ℹ️ /help",
-      "Bu yardım ekranını açar.",
-      "",
-      "Topluluk ve iletişim",
-      "👤 Telegram: https://t.me/smhgkts",
-      "👥 Grup: https://t.me/ackinackiradar",
-      "📢 Kanal: https://t.me/Ackinackiradarofficial",
-      "𝕏 X / İletişim: https://x.com/elturko_sg",
-      "",
-      "Not: Bu, topluluk tarafından geliştirilen bir radar botudur; resmî bir Acki Nacki ürünü değildir.",
-    ].join("\n");
-  }
-
+function buildHelpMessage(_languageCode?: string) {
   return [
     "📡 Acki Nacki Radar — Help",
     "",
