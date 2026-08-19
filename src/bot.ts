@@ -2704,21 +2704,52 @@ const MINING_CYCLE_BLOCKS_PER_SECOND = 3.0;
 
 function buildMiningCycleRemainingText(): string {
   const clock = getChainEpochClock();
-  if (!clock) {
-    return "⏳ Madencilik döngüsü: zincir saati senkronizasyon bekliyor.";
+  let currentSeqNo: number | null = null;
+  let dataAgeSeconds = Number.POSITIVE_INFINITY;
+
+  if (clock) {
+    const observedAtMs = new Date(clock.observedAt).getTime();
+    dataAgeSeconds = Math.max(0, (Date.now() - observedAtMs) / 1000);
+    if (Number.isFinite(dataAgeSeconds) && dataAgeSeconds <= 10 * 60) {
+      currentSeqNo = Math.floor(
+        clock.currentSeqNo +
+          dataAgeSeconds * MINING_CYCLE_BLOCKS_PER_SECOND,
+      );
+    }
   }
 
-  const observedAtMs = new Date(clock.observedAt).getTime();
-  const ageSeconds = Math.max(0, (Date.now() - observedAtMs) / 1000);
-  if (!Number.isFinite(ageSeconds) || ageSeconds > 10 * 60) {
-    return "⏳ Madencilik döngüsü: zincir saati yenileniyor.";
+  // The web sampler persists every successful Mainnet height. This survives a
+  // bot restart, unlike the in-memory 5-minute epoch clock, so /epoch can answer
+  // immediately even while the shared GraphQL block pool is temporarily busy.
+  if (currentSeqNo === null) {
+    try {
+      const snapshot = JSON.parse(
+        fs.readFileSync(path.join(dataDir, "chain-stats-snapshot.json"), "utf8"),
+      );
+      const latestBlock = Number(snapshot?.data?.latestBlock);
+      const atMs = Number(snapshot?.atMs);
+      dataAgeSeconds = Math.max(0, (Date.now() - atMs) / 1000);
+
+      if (
+        Number.isFinite(latestBlock) &&
+        latestBlock > 0 &&
+        Number.isFinite(dataAgeSeconds) &&
+        dataAgeSeconds <= 24 * 60 * 60
+      ) {
+        currentSeqNo = Math.floor(
+          latestBlock + dataAgeSeconds * MINING_CYCLE_BLOCKS_PER_SECOND,
+        );
+      }
+    } catch {
+      currentSeqNo = null;
+    }
   }
 
-  const projectedSeqNo = Math.floor(
-    clock.currentSeqNo + ageSeconds * MINING_CYCLE_BLOCKS_PER_SECOND,
-  );
+  if (currentSeqNo === null) {
+    return "⏳ Madencilik döngüsü: zincir yüksekliği şu anda alınamıyor.";
+  }
   const elapsedBlocks =
-    ((projectedSeqNo % MINING_CYCLE_BLOCK_PERIOD) +
+    ((currentSeqNo % MINING_CYCLE_BLOCK_PERIOD) +
       MINING_CYCLE_BLOCK_PERIOD) %
     MINING_CYCLE_BLOCK_PERIOD;
   const remainingBlocks = Math.max(
@@ -2742,6 +2773,7 @@ function buildMiningCycleRemainingText(): string {
     `Kalan süre: ${hours} sa ${minutes} dk`,
     `Döngü ilerlemesi: %${progress}`,
     `Tahmini bitiş: ${endsAt.toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" })}`,
+    `Veri: ${dataAgeSeconds <= 120 ? "canlı" : "gecikmeli"}`,
   ].join("\n");
 }
 
