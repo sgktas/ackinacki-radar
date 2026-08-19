@@ -2887,30 +2887,69 @@ function buildHowToUseMessage(languageCode?: string) {
   ].join("\n");
 }
 
-function buildHelpMessage() {
+function buildHelpMessage(languageCode?: string) {
+  if (String(languageCode || "").toLowerCase().startsWith("tr")) {
+    return [
+      "📡 Acki Nacki Radar — Yardım",
+      "",
+      "Acki Nacki cüzdanlarını, zincir verilerini ve madencilik döngüsünü tek yerden takip edin.",
+      "",
+      "Komutlar",
+      "",
+      "🚀 /start",
+      "Ana menüyü ve başlangıç rehberini açar.",
+      "",
+      "🔍 /info",
+      "Cüzdan adı veya 0: ile başlayan adresi sorgular; bakiye, MBI ve zincir bilgilerini gösterir.",
+      "",
+      "🎁 /trial",
+      `Ödeme gerektirmeden ${TRIAL_DAYS} günlük ücretsiz Cloud Miner hediyesini başlatır. Her hesap bir kez kullanabilir.`,
+      "",
+      "⏳ /epoch",
+      "Sonraki madencilik epoch'una kalan süreyi saat ve dakika olarak gösterir.",
+      "",
+      "ℹ️ /help",
+      "Bu yardım ekranını açar.",
+      "",
+      "Topluluk ve iletişim",
+      "👤 Telegram: https://t.me/smhgkts",
+      "👥 Grup: https://t.me/ackinackiradar",
+      "📢 Kanal: https://t.me/Ackinackiradarofficial",
+      "𝕏 X / İletişim: https://x.com/elturko_sg",
+      "",
+      "Not: Bu, topluluk tarafından geliştirilen bir radar botudur; resmî bir Acki Nacki ürünü değildir.",
+    ].join("\n");
+  }
+
   return [
-    "📡 Acki Nacki Radar",
+    "📡 Acki Nacki Radar — Help",
     "",
-    "Track Acki Nacki wallets and mining activity.",
+    "Track Acki Nacki wallets, chain data and mining cycles in one place.",
     "",
-    "Commands:",
+    "Commands",
     "",
-    "/info ackerman",
-    "Show wallet radar instantly.",
-    "You can query multiple wallets in one message.",
-    "A wallet you look up joins the radar automatically.",
+    "🚀 /start",
+    "Open the main menu and getting-started guide.",
     "",
-    "/forget ackerman",
-    "Delete a wallet record. Run it with no name to list yours.",
+    "🔍 /info",
+    "Look up a wallet name or an address starting with 0: and show its balance, MBI and chain details.",
     "",
-    "/status",
-    "Show mining summary.",
+    "🎁 /trial",
+    `Start a free ${TRIAL_DAYS}-day Cloud Miner gift with no payment required. Available once per account.`,
     "",
-    "Note:",
-    "This is a community-built radar bot. It is not an official Acki Nacki product.",
+    "⏳ /epoch",
+    "Show the hours and minutes remaining until the next mining epoch.",
     "",
-    "Contact:",
-    "info@ackinackiradar.com",
+    "ℹ️ /help",
+    "Open this help screen.",
+    "",
+    "Community & contact",
+    "👤 Telegram: https://t.me/smhgkts",
+    "👥 Group: https://t.me/ackinackiradar",
+    "📢 Channel: https://t.me/Ackinackiradarofficial",
+    "𝕏 X / Contact: https://x.com/elturko_sg",
+    "",
+    "Note: This is a community-built radar bot; it is not an official Acki Nacki product.",
   ].join("\n");
 }
 
@@ -7771,7 +7810,9 @@ export async function startBot(botToken: string) {
       `Telegram ID'niz: ${chatId}\n\nBu numarayı yalnızca yönetici yetkisi tanımlanması için paylaşın.`,
     );
   });
-  bot.command("help", async (ctx) => ctx.reply(buildHelpMessage()));
+  bot.command("help", async (ctx) =>
+    ctx.reply(buildHelpMessage(ctx.from?.language_code)),
+  );
   // /watch, /mining, /unwatch, /wallets and /watchlist were removed on
   // 2026-08-09: reward notifications are off, so a user-managed watch list no
   // longer means anything.  Wallets now enter the scan set on their own, from
@@ -9314,7 +9355,7 @@ export async function startBot(botToken: string) {
 
   bot.action("help", async (ctx) => {
     await ctx.answerCbQuery();
-    await ctx.reply(buildHelpMessage());
+    await ctx.reply(buildHelpMessage(ctx.from?.language_code));
   });
 
   // The whole wallet-watch button surface (add / list / settings / toggle /
@@ -9550,7 +9591,7 @@ export async function startBot(botToken: string) {
   });
 
   bot.hears(MENU_HELP, async (ctx) => {
-    await ctx.reply(buildHelpMessage());
+    await ctx.reply(buildHelpMessage(ctx.from?.language_code));
   });
 
   // /info keeps the persistent keyboard visible while waiting for the next
