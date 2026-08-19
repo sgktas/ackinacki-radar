@@ -2635,6 +2635,8 @@ const WALLET_INFO_PROMPT = [
   "Acki Nacki cüzdan adını veya 0: ile başlayan adresini gönder.",
   "Örnek: ackerman",
 ].join("\n");
+const WALLET_INFO_INPUT_TTL_MS = 5 * 60 * 1000;
+const pendingWalletInfoInputs = new Map<number, number>();
 
 const MENU_PLANS = "⭐ Pay with Stars";
 const MENU_TRIAL = "🎁 3-Day Trial";
@@ -2803,6 +2805,14 @@ function buildMainKeyboard() {
     ["/epoch ⏳", "/trial 🎁"],
     ["/help ℹ️"],
   ]).resize();
+}
+
+async function promptWalletInfo(ctx: any) {
+  const chatId = Number(ctx.chat?.id);
+  if (Number.isFinite(chatId)) {
+    pendingWalletInfoInputs.set(chatId, Date.now() + WALLET_INFO_INPUT_TTL_MS);
+  }
+  await ctx.reply(WALLET_INFO_PROMPT, buildMainKeyboard());
 }
 
 function buildMainMenu() {
@@ -3292,14 +3302,14 @@ async function replyWalletInfo(ctx: any, inputOverride?: string) {
   ).trim();
 
   if (!input || input === "🔍") {
-    await ctx.reply(WALLET_INFO_PROMPT, Markup.forceReply());
+    await promptWalletInfo(ctx);
     return;
   }
 
   const inputs = parseWalletInfoInputs(input);
 
   if (!inputs.length) {
-    await ctx.reply(WALLET_INFO_PROMPT, Markup.forceReply());
+    await promptWalletInfo(ctx);
     return;
   }
 
@@ -9513,19 +9523,23 @@ export async function startBot(botToken: string) {
     await ctx.reply(buildHelpMessage());
   });
 
-  // /info without an argument opens a force-reply input. Treat the answer as
-  // the command argument so keyboard users never have to edit a slash command.
+  // /info keeps the persistent keyboard visible while waiting for the next
+  // plain-text wallet name/address. A direct reply to the prompt also works.
   bot.on("text", async (ctx, next) => {
     const replyTo = (ctx.message as any)?.reply_to_message;
+    const chatId = Number(ctx.chat?.id);
+    const pendingUntil = pendingWalletInfoInputs.get(chatId) || 0;
+    const isPromptReply = String(replyTo?.text || "") === WALLET_INFO_PROMPT;
 
-    if (!replyTo || String(replyTo.text || "") !== WALLET_INFO_PROMPT) {
+    if (!isPromptReply && pendingUntil <= Date.now()) {
       return next();
     }
 
     const input = String(ctx.message?.text || "").trim();
+    pendingWalletInfoInputs.delete(chatId);
+
     if (!input || input.startsWith("/")) {
-      await ctx.reply(WALLET_INFO_PROMPT, Markup.forceReply());
-      return;
+      return next();
     }
 
     await replyWalletInfo(ctx, input);
