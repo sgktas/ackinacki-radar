@@ -2953,6 +2953,38 @@ function readAdminPaymentWalletSnapshot() {
   return adminPaymentWalletInFlight;
 }
 
+function enrichAdminPaymentWalletSnapshot(
+  snapshot: Awaited<ReturnType<typeof getPaymentWalletSnapshot>>,
+) {
+  const minerByAddress = new Map<string, BeeMinerRecord>();
+  for (const miner of readBeeMinerState().miners) {
+    const address = String(miner.minerAddress || "").trim().toLowerCase();
+    if (address) minerByAddress.set(address, miner);
+  }
+
+  const userByChatId = new Map<number, UserRecord>();
+  for (const user of readUsers()) {
+    userByChatId.set(Number(user.telegramId), user);
+  }
+
+  return {
+    ...snapshot,
+    incomingTransfers: snapshot.incomingTransfers.map((transfer) => {
+      const senderAddress = String(transfer.src || "").trim().toLowerCase();
+      const miner = minerByAddress.get(senderAddress);
+      const user = miner ? userByChatId.get(Number(miner.chatId)) : undefined;
+
+      return {
+        ...transfer,
+        senderWalletName: miner?.walletName ?? null,
+        senderChatId: miner?.chatId ?? null,
+        senderTelegramUsername: user?.username ?? null,
+        senderTelegramFirstName: user?.firstName ?? null,
+      };
+    }),
+  };
+}
+
 function adminPaymentWalletErrorCode(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("pool timed out")) return "MAINNET_POOL_BUSY";
@@ -5305,7 +5337,7 @@ export function startServer(port: number) {
         stale: false,
         cached: true,
         fetchedAt: new Date(adminPaymentWalletCache.fetchedAt).toISOString(),
-        wallet: adminPaymentWalletCache.data,
+        wallet: enrichAdminPaymentWalletSnapshot(adminPaymentWalletCache.data),
       });
       return;
     }
@@ -5318,7 +5350,7 @@ export function startServer(port: number) {
         stale: false,
         cached: false,
         fetchedAt: new Date().toISOString(),
-        wallet,
+        wallet: enrichAdminPaymentWalletSnapshot(wallet),
       });
     } catch (error) {
       const errorCode = adminPaymentWalletErrorCode(error);
@@ -5332,7 +5364,7 @@ export function startServer(port: number) {
           cached: true,
           error: errorCode,
           fetchedAt: new Date(adminPaymentWalletCache.fetchedAt).toISOString(),
-          wallet: adminPaymentWalletCache.data,
+          wallet: enrichAdminPaymentWalletSnapshot(adminPaymentWalletCache.data),
         });
         return;
       }
