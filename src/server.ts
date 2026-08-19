@@ -3337,6 +3337,33 @@ export function startServer(port: number) {
     });
   });
 
+  // Telegram Mini App login. initData is signed by Telegram and verified with
+  // the bot token before a regular dashboard session is issued. The browser
+  // never trusts initDataUnsafe and the token is not placed in the URL.
+  app.post("/api/auth/telegram/mini-app", (req, res) => {
+    const initData = String(req.body?.initData || "");
+    const telegramId = verifyTelegramWebAppInitData(initData);
+
+    if (telegramId === null) {
+      res.status(401).json({ ok: false, error: "INVALID_TELEGRAM_INIT_DATA" });
+      return;
+    }
+
+    let username: string | null = null;
+    try {
+      const user = JSON.parse(new URLSearchParams(initData).get("user") || "{}");
+      username = typeof user?.username === "string" ? user.username : null;
+    } catch {
+      // Identity is already verified above; username is optional display data.
+    }
+
+    res.json({
+      ok: true,
+      token: signSession(telegramId),
+      user: { telegramId, username },
+    });
+  });
+
   // --- Telegram OIDC: step 1, send the browser to Telegram ---
   app.get("/api/auth/telegram/start", (_req, res) => {
     // This endpoint is reached by a browser navigation, not fetch(), so every

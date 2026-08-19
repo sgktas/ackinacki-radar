@@ -2635,6 +2635,11 @@ const MENU_TRIAL = "🎁 3-Day Trial";
 const MENU_WALLETS = "👛 Wallets";
 const MENU_PANEL = "🌐 Dashboard";
 const MENU_HELP = "ℹ️ Help";
+const MENU_START = "🏠 Start";
+const MENU_INFO = "🔍 Wallet Info";
+const MENU_RADAR_WALLETS = "📡 Radar Wallets";
+const MENU_EPOCH = "⏱ Epoch";
+const DASHBOARD_MINI_APP_URL = "https://ackinackiradar.com/cloud-miner";
 
 // The bot's one job is selling with Telegram Stars. Mining management, wallet
 // lookup and status all live on the dashboard, which already has the endpoints
@@ -2727,9 +2732,10 @@ async function sendWalletsScreen(ctx: any) {
 
 function buildMainKeyboard() {
   return Markup.keyboard([
+    [MENU_INFO, MENU_RADAR_WALLETS],
+    [MENU_EPOCH, MENU_WALLETS],
     [MENU_TRIAL, MENU_PLANS],
-    [MENU_WALLETS],
-    [MENU_PANEL, MENU_HELP],
+    [MENU_START, MENU_HELP],
   ]).resize();
 }
 
@@ -9298,6 +9304,20 @@ export async function startBot(botToken: string) {
     await sendWalletsScreen(ctx);
   });
 
+  // The Telegram system menu button is now the Dashboard Mini App. Keep the
+  // former command-menu actions reachable from the reply keyboard on the
+  // right side of the composer, without making users type slash commands.
+  bot.hears(MENU_START, async (ctx) => {
+    await ctx.reply(buildWelcomeMessage(), buildMainKeyboard());
+    await ctx.reply(buildHowToUseMessage());
+  });
+
+  bot.hears(MENU_INFO, replyWalletInfo);
+  bot.hears(MENU_RADAR_WALLETS, replyForgetWallet);
+  bot.hears(MENU_EPOCH, async (ctx) => {
+    await ctx.reply(buildEpochClockText());
+  });
+
   // Start / pause from the wallets screen.
   bot.action(/^mn:tg:(.+)$/, async (ctx) => {
     const walletName = String((ctx as any).match[1] || "");
@@ -9505,6 +9525,18 @@ export async function startBot(botToken: string) {
   // Keep the default scope (used as a fallback for anything not covered
   // above, e.g. channels) aligned with the restrictive group list.
   await bot.telegram.setMyCommands(groupCommandList);
+
+  // setMyCommands can make Telegram restore the default "commands" button.
+  // Apply the Mini App button last so it stays on the left after every restart.
+  // The former command choices live behind the right-side reply keyboard.
+  await bot.telegram.setChatMenuButton({
+    menuButton: {
+      type: "web_app",
+      text: "Dashboard",
+      web_app: { url: DASHBOARD_MINI_APP_URL },
+    },
+  });
+  console.log("Telegram menu button set: Dashboard Mini App");
 
   const launchPromise = bot.launch();
 
