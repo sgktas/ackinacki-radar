@@ -2635,7 +2635,7 @@ const MENU_TRIAL = "🎁 3-Day Trial";
 const MENU_WALLETS = "👛 Wallets";
 const MENU_PANEL = "🌐 Dashboard";
 const MENU_HELP = "ℹ️ Help";
-const DASHBOARD_MINI_APP_URL = "https://ackinackiradar.com/";
+const DASHBOARD_MINI_APP_URL = "https://ackinackiradar.com/?tgapp=3";
 
 // The bot's one job is selling with Telegram Stars. Mining management, wallet
 // lookup and status all live on the dashboard, which already has the endpoints
