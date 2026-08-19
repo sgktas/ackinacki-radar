@@ -2832,9 +2832,8 @@ function buildWelcomeMessage(languageCode?: string) {
     return [
       "📡 Acki Nacki Radar'a hoş geldiniz",
       "",
-      "Cüzdan bilgileri, NACKL bakiyeleri, MBI seviyeleri ve Mainnet verilerini tek yerden takip edin.",
+      "Cüzdan bilgilerini, NACKL bakiyelerini, MBI seviyelerini, Mainnet verilerini ve madencilik faaliyetlerini tek yerden takip edin.",
       "",
-      "Web3Hunter tarafından geliştirilmiştir.",
       "Resmî bir Acki Nacki platformu değildir.",
       "",
       "Başlamak için aşağıdaki adımları izleyin:",
@@ -2844,10 +2843,9 @@ function buildWelcomeMessage(languageCode?: string) {
   return [
     "📡 Welcome to Acki Nacki Radar",
     "",
-    "Wallet insights, NACKL balances, MBI levels and wallet scanning.",
+    "Track wallet insights, NACKL balances, MBI levels, Mainnet data and mining activity in one place.",
     "",
-    "Built by Web3Hunter.",
-    "Not official.",
+    "This is not an official Acki Nacki platform.",
     "",
     "Choose an action below:",
   ].join("\n");
