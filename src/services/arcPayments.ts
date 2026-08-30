@@ -212,6 +212,16 @@ async function arcRpc(
   throw new Error(`ARC_RPC_ALL_FAILED: ${failures.join(" | ")}`);
 }
 
+// The chain the endpoint is actually serving. Checked before crediting
+// anything: testnet USDC is free from a faucet, so crediting a testnet payment
+// as though it were mainnet would give subscriptions away.
+export async function fetchArcChainId(
+  rpcUrls?: readonly string[],
+): Promise<number> {
+  const result = await arcRpc("eth_chainId", [], rpcUrls);
+  return Number(hexToBigInt(String(result)));
+}
+
 export async function fetchArcBlockNumber(
   rpcUrls?: readonly string[],
 ): Promise<number> {

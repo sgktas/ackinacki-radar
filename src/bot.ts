@@ -36,6 +36,16 @@ import {
   usdtAmountToRaw,
 } from "./services/tonPayments";
 import {
+  ARC_CHAIN_ID,
+  codeToInvoiceId,
+  fetchArcAmountPaid,
+  fetchArcBlockNumber,
+  fetchArcChainId,
+  fetchArcPayments,
+  formatUsdcAmount,
+  usdToUsdcRaw,
+} from "./services/arcPayments";
+import {
   getChainEpochClock,
   setChainEpochClock,
   type ChainEpochClock,
@@ -567,7 +577,10 @@ type PendingInvoice = {
   // TON-rail invoices carry a code the payer puts in the transfer comment.
   // Absent on legacy SHELL invoices, which are matched by exact amount.
   code?: string;
-  currency?: "shell" | "usdt" | "nackl";
+  currency?: "shell" | "usdt" | "nackl" | "usdc";
+  // Arc-rail invoices carry the bytes32 the payer passes to pay(). Derived
+  // from `code`, stored so a lookup never has to re-derive it.
+  arcInvoiceId?: string;
   // One invoice, either currency: `amountRaw` is the USDT price and
   // `amountTonRaw` the TON equivalent locked at creation time. TON is absent
   // when the rate lookup failed, in which case only USDT is accepted.
@@ -586,7 +599,7 @@ type Subscription = {
 type PaymentHistoryEntry = {
   id: string;
   status: "confirmed" | "manual_grant" | "invoice_deleted";
-  source: "nackl" | "ton" | "usdt" | "shell" | "stars" | "admin";
+  source: "nackl" | "ton" | "usdt" | "shell" | "stars" | "admin" | "arc";
   chatId: number;
   planId: string;
   invoiceId?: string | null;
@@ -628,6 +641,14 @@ type PaymentsState = {
   // Highest TON logical time already processed. `lt` is monotonic per account,
   // so it is a reliable cursor: everything at or below it has been handled.
   tonLastLt?: number;
+  // Highest Arc block already scanned for payments. Blocks, not timestamps:
+  // Arc makes roughly 600,000 a day, so this moves fast and a stale value
+  // means a wide catch-up range rather than a missed payment.
+  arcLastBlock?: number;
+  // chatIds that have taken the Arc-rail testnet trial. Deliberately separate
+  // from `trialUsed`: the free /trial and this one are different offers, and a
+  // person may take each once.
+  arcTrialUsed?: number[];
   // Durable audit trail shown in the admin panel. This records the party and
   // real chain transaction at credit time instead of trying to reconstruct it
   // later from a disappearing pending invoice.
@@ -6246,6 +6267,40 @@ const TONAPI_KEY = String(process.env.TONAPI_KEY || "").trim() || undefined;
 let tonPaymentsTimer: ReturnType<typeof setTimeout> | undefined;
 let tonPaymentsRunning = false;
 
+// Arc / USDC rail. Its own switch, like every other rail: this one is on Arc
+// TESTNET, where USDC is free from a faucet, so it must never be able to sell a
+// real subscription. Default off, and see ARC_EXPECTED_CHAIN_ID below.
+const ARC_REGISTRY_ADDRESS = String(process.env.ARC_REGISTRY_ADDRESS || "").trim();
+const ARC_MERCHANT_ADDRESS = String(process.env.ARC_MERCHANT_ADDRESS || "").trim();
+const ARC_PAYMENTS_ENABLED =
+  String(process.env.ARC_PAYMENTS_ENABLED || "false").toLowerCase() === "true" &&
+  Boolean(ARC_REGISTRY_ADDRESS) &&
+  Boolean(ARC_MERCHANT_ADDRESS);
+const ARC_PAYMENTS_CHECK_INTERVAL_MS =
+  Number(process.env.ARC_PAYMENTS_CHECK_INTERVAL_SECONDS || 30) * 1000;
+const ARC_INVOICE_EXPIRY_MS =
+  Number(process.env.ARC_INVOICE_EXPIRY_MINUTES || 60) * 60 * 1000;
+// Days granted for an Arc testnet payment. This is a trial, not a sale — the
+// USDC that pays for it costs the payer nothing.
+const ARC_TRIAL_DAYS = Number(process.env.ARC_TRIAL_DAYS || 3);
+// Total Arc trials to hand out, so a free-faucet rail cannot quietly replace
+// the paid ones. Not a cost limit: mining gas is paid by the user's own wallet.
+const ARC_TRIAL_QUOTA = Number(process.env.ARC_TRIAL_QUOTA || 100);
+// The chain this rail is allowed to credit from. Mainnet launches 2026-09-16
+// with a different id; until this value is changed deliberately, a mainnet
+// payment cannot be credited by testnet code and vice versa.
+const ARC_EXPECTED_CHAIN_ID = Number(process.env.ARC_EXPECTED_CHAIN_ID || ARC_CHAIN_ID);
+// Symbolic price. The USDC is free from a faucet, so this is not revenue — it
+// exists so the payer performs a real payment, and so a dust transfer against a
+// leaked code settles nothing.
+const ARC_TRIAL_PRICE_USD = Number(process.env.ARC_TRIAL_PRICE_USD || 1);
+const ARC_PAY_URL =
+  String(process.env.ARC_PAY_URL || "https://ackinackiradar.com/pay").trim();
+
+let arcPaymentsTimer: ReturnType<typeof setTimeout> | undefined;
+let arcPaymentsRunning = false;
+let arcChainIdVerified = false;
+
 async function runTonPaymentsCheckTick(bot: Telegraf<any>) {
   if (tonPaymentsRunning) return;
 
@@ -6492,6 +6547,206 @@ function startTonPaymentsScheduler(bot: Telegraf<any>) {
   });
 
   scheduleNext(TON_PAYMENTS_CHECK_INTERVAL_MS);
+}
+
+// Arc rail: credit by asking the contract, not by replaying logs.
+//
+// The obvious design would poll `Paid` events the way the TON rail polls
+// transfers. It does not survive this chain. Arc produces roughly 600,000
+// blocks a day, every endpoint caps how wide an eth_getLogs range may be
+// (10k on three of them, 1k on the fourth), and one of them prunes history
+// outright — so a bot that was down for a day faces a range no endpoint will
+// answer, and the payment is lost exactly the way TON payments have been lost.
+//
+// Reading contract state instead removes the whole class of problem. The
+// registry keeps `amountPaid` per invoice forever, so the cost of a tick is the
+// number of invoices we are waiting on — never the number of blocks the chain
+// produced while we were away. Downtime of any length costs nothing.
+async function runArcPaymentsCheckTick(bot: Telegraf<any>) {
+  if (arcPaymentsRunning) return;
+
+  arcPaymentsRunning = true;
+
+  try {
+    // Refuse to credit anything until the endpoint is confirmed to be the
+    // chain we expect. Testnet USDC is free from a faucet; crediting it as
+    // though it were mainnet money would give the product away.
+    if (!arcChainIdVerified) {
+      const chainId = await fetchArcChainId();
+
+      if (chainId !== ARC_EXPECTED_CHAIN_ID) {
+        console.error("Arc payments: chain id mismatch, rail stays off:", {
+          expected: ARC_EXPECTED_CHAIN_ID,
+          got: chainId,
+        });
+        return;
+      }
+
+      arcChainIdVerified = true;
+      console.log("Arc payments: chain id verified:", { chainId });
+    }
+
+    const state = readPaymentsState();
+    const now = Date.now();
+
+    const waiting = state.pendingInvoices.filter(
+      (item) =>
+        item.currency === "usdc" &&
+        item.arcInvoiceId &&
+        new Date(item.expiresAt).getTime() > now,
+    );
+
+    if (!waiting.length) return;
+
+    let credited = 0;
+
+    for (const invoice of waiting) {
+      let paidRaw: bigint;
+
+      try {
+        paidRaw = await fetchArcAmountPaid({
+          registryAddress: ARC_REGISTRY_ADDRESS,
+          merchantAddress: ARC_MERCHANT_ADDRESS,
+          invoiceId: invoice.arcInvoiceId!,
+        });
+      } catch (error) {
+        // One unreachable invoice must not stall the rest of the sweep.
+        console.error("Arc payments: amountPaid failed:", {
+          code: invoice.code,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        continue;
+      }
+
+      // The full amount must be there. No tolerance: unlike the TON rail there
+      // is no exchange rate and no rounding — the payer was quoted an exact
+      // figure and the contract reports exactly what arrived. A leaked code
+      // paid with dust therefore buys nothing.
+      if (paidRaw < BigInt(invoice.amountRaw)) continue;
+
+      const plan = resolvePaidPlan(invoice.planId);
+
+      if (!plan) continue;
+
+      // ARC_TRIAL_DAYS, not plan.days: this rail hands out a trial, and the
+      // testnet USDC that paid for it cost the payer nothing.
+      const activeUntil = grantSubscription(
+        state,
+        invoice.chatId,
+        plan.id,
+        ARC_TRIAL_DAYS,
+        { trial: true },
+      );
+
+      state.arcTrialUsed = [
+        ...(state.arcTrialUsed ?? []).filter((id) => id !== invoice.chatId),
+        invoice.chatId,
+      ];
+      state.pendingInvoices = state.pendingInvoices.filter(
+        (item) => item.id !== invoice.id,
+      );
+
+      appendPaymentHistory(state, {
+        id: `arc:${invoice.arcInvoiceId}:${invoice.id}`,
+        status: "confirmed",
+        source: "arc",
+        chatId: invoice.chatId,
+        planId: plan.id,
+        invoiceId: invoice.id,
+        amountRaw: paidRaw.toString(),
+        currency: "usdc",
+        transactionId: invoice.arcInvoiceId ?? null,
+        invoiceCreatedAt: invoice.createdAt,
+        recordedAt: new Date().toISOString(),
+        activeUntil,
+      });
+
+      credited += 1;
+
+      console.log("Arc payments: trial activated:", {
+        chatId: invoice.chatId,
+        code: invoice.code,
+        amount: formatUsdcAmount(paidRaw.toString()),
+        activeUntil,
+      });
+
+      try {
+        await bot.telegram.sendMessage(
+          invoice.chatId,
+          [
+            "✅ Arc ödemen zincirde doğrulandı.",
+            "",
+            `Süre: ${ARC_TRIAL_DAYS} gün`,
+            `Tutar: ${formatUsdcAmount(paidRaw.toString())} test USDC`,
+            `Bitiş: ${new Date(activeUntil).toLocaleString("tr-TR")}`,
+            "",
+            "Madenciliği başlatmak için: /miner_start",
+          ].join("\n"),
+        );
+      } catch (error) {
+        console.error("Arc payments: activation notice failed:", {
+          chatId: invoice.chatId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Expired invoices go, so a leaked code cannot be redeemed days later.
+    state.pendingInvoices = state.pendingInvoices.filter(
+      (item) =>
+        item.currency !== "usdc" ||
+        new Date(item.expiresAt).getTime() > now,
+    );
+
+    try {
+      state.arcLastBlock = await fetchArcBlockNumber();
+    } catch {
+      // Only used to show freshness in the admin panel.
+    }
+
+    writePaymentsState(state);
+
+    if (credited) {
+      console.log("Arc payments check finished:", { credited });
+    }
+  } catch (error) {
+    console.error("Arc payments check failed:", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    arcPaymentsRunning = false;
+  }
+}
+
+function startArcPaymentsScheduler(bot: Telegraf<any>) {
+  if (!ARC_PAYMENTS_ENABLED) {
+    console.log(
+      "Arc payments scheduler disabled (ARC_PAYMENTS_ENABLED / ARC_REGISTRY_ADDRESS / ARC_MERCHANT_ADDRESS)",
+    );
+    return;
+  }
+
+  if (arcPaymentsTimer) {
+    clearTimeout(arcPaymentsTimer);
+  }
+
+  const scheduleNext = (delayMs: number) => {
+    arcPaymentsTimer = setTimeout(() => {
+      void runArcPaymentsCheckTick(bot).finally(() =>
+        scheduleNext(ARC_PAYMENTS_CHECK_INTERVAL_MS),
+      );
+    }, delayMs);
+  };
+
+  console.log("Arc payments scheduler started:", {
+    intervalSeconds: Math.round(ARC_PAYMENTS_CHECK_INTERVAL_MS / 1000),
+    chainId: ARC_EXPECTED_CHAIN_ID,
+    registry: ARC_REGISTRY_ADDRESS,
+    trialDays: ARC_TRIAL_DAYS,
+    quota: ARC_TRIAL_QUOTA,
+  });
+
+  scheduleNext(ARC_PAYMENTS_CHECK_INTERVAL_MS);
 }
 
 // NACKL is currency id 1 on Acki Nacki. It has its own transfer cursor and
@@ -8038,7 +8293,97 @@ export async function startBot(botToken: string) {
     );
   }
 
+  // Arc rail trial. Aimed at people who have already spent their free /trial:
+  // the free one answers "I want to try this", this one answers "I want more,
+  // but I am not paying yet" — which is also the group most willing to walk
+  // through a new payment flow. That makes it a live test of the rail with real
+  // users rather than a demo run by us.
+  //
+  // It is a TESTNET rail. The USDC costs the payer nothing, so it must never
+  // stand in for a purchase: hence the separate ledger, the quota, and
+  // ARC_PAYMENTS_ENABLED defaulting to off.
+  async function handleArcTrialRequest(ctx: any) {
+    const chatId = ctx.chat?.id;
+
+    if (!chatId) {
+      await ctx.reply("Could not read chat info.");
+      return;
+    }
+
+    if (!ARC_PAYMENTS_ENABLED) {
+      await ctx.reply("Arc ödemesi şu anda kapalı.");
+      return;
+    }
+
+    const state = readPaymentsState();
+    const used = state.arcTrialUsed ?? [];
+
+    if (used.includes(chatId)) {
+      await ctx.reply("Arc denemeni zaten kullandın.");
+      return;
+    }
+
+    if (used.length >= ARC_TRIAL_QUOTA) {
+      await ctx.reply(`Arc testnet denemesi kontenjanı doldu (${ARC_TRIAL_QUOTA}).`);
+      return;
+    }
+
+    const now = Date.now();
+
+    // Reuse a live invoice rather than minting a second code for the same
+    // person; two open codes only invites paying the wrong one.
+    let invoice = state.pendingInvoices.find(
+      (item) =>
+        item.chatId === chatId &&
+        item.currency === "usdc" &&
+        new Date(item.expiresAt).getTime() > now,
+    );
+
+    if (!invoice) {
+      const code = buildInvoiceCode();
+      const plan = PLANS[0]!;
+
+      invoice = {
+        id: `${chatId}:arc:${now}`,
+        chatId,
+        planId: plan.id,
+        amountRaw: usdToUsdcRaw(ARC_TRIAL_PRICE_USD),
+        createdAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + ARC_INVOICE_EXPIRY_MS).toISOString(),
+        code,
+        currency: "usdc",
+        arcInvoiceId: codeToInvoiceId(code),
+      };
+
+      state.pendingInvoices.push(invoice);
+      writePaymentsState(state);
+    }
+
+    const minutesLeft = Math.max(
+      1,
+      Math.round((new Date(invoice.expiresAt).getTime() - now) / 60000),
+    );
+
+    await ctx.reply(
+      [
+        `🧪 Arc testnet denemesi — ${ARC_TRIAL_DAYS} gün`,
+        "",
+        "Bu bir TEST ağı ödemesidir. Kullanacağın USDC faucet'ten",
+        "ücretsiz alınır, gerçek para değildir.",
+        "",
+        `Tutar: ${formatUsdcAmount(invoice.amountRaw)} test USDC`,
+        `Kod: ${invoice.code}`,
+        "",
+        `Öde: ${ARC_PAY_URL}?i=${invoice.code}`,
+        "",
+        `Bu bağlantı ${minutesLeft} dakika geçerli.`,
+        "Ödeme zincirde onaylanınca aboneliğin otomatik açılır.",
+      ].join("\n"),
+    );
+  }
+
   bot.command("trial", handleTrialRequest);
+  bot.command("trial_arc", handleArcTrialRequest);
   bot.hears(MENU_TRIAL, handleTrialRequest);
 
   // /wallets is the name people look for; /forget kept as an alias so anything
@@ -9649,6 +9994,7 @@ export async function startBot(botToken: string) {
   startPaymentsCheckScheduler(bot);
   startTonPaymentsScheduler(bot);
   startNacklPaymentsScheduler(bot);
+  startArcPaymentsScheduler(bot);
 
   const me = await bot.telegram.getMe();
   console.log(`Telegram bot çalışıyor: @${me.username}`);
