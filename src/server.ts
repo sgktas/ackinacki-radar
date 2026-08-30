@@ -1816,9 +1816,10 @@ type PendingInvoice = {
   amountRaw: string;
   createdAt: string;
   expiresAt: string;
-  currency?: "shell" | "usdt" | "nackl";
+  currency?: "shell" | "usdt" | "nackl" | "usdc";
   code?: string;
   amountTonRaw?: string;
+  arcInvoiceId?: string;
 };
 
 type Subscription = {
@@ -5649,6 +5650,80 @@ export function startServer(port: number) {
       console.error("Admin notification failed:", { chatId, message: error?.message });
       res.status(502).json({ ok: false, error: "SEND_FAILED", detail: String(error?.message || error) });
     }
+  });
+
+  // --- Arc payment page -------------------------------------------------
+  //
+  // The page is static and served under the site's CSP, which is
+  // `connect-src 'self'`. It therefore cannot reach an Arc RPC, a CDN, or a
+  // WalletConnect relay by itself — everything it needs comes from here, and
+  // the chain calls it does make go through the injected wallet, which is not
+  // page network traffic and so is unaffected.
+  app.get("/api/arc/config", (_req, res) => {
+    const registry = String(process.env.ARC_REGISTRY_ADDRESS || "").trim();
+    const merchant = String(process.env.ARC_MERCHANT_ADDRESS || "").trim();
+    const enabled =
+      String(process.env.ARC_PAYMENTS_ENABLED || "false").toLowerCase() === "true" &&
+      Boolean(registry) &&
+      Boolean(merchant);
+
+    res.json({
+      ok: true,
+      enabled,
+      chainId: Number(process.env.ARC_EXPECTED_CHAIN_ID || 5042002),
+      chainName: String(process.env.ARC_CHAIN_NAME || "Arc Testnet"),
+      registry,
+      merchant,
+      // For wallet_addEthereumChain, so the payer never has to add the network
+      // by hand. Public endpoints; not secrets.
+      rpcUrl: String(process.env.ARC_PUBLIC_RPC_URL || "https://rpc.testnet.arc.io"),
+      explorerUrl: String(process.env.ARC_EXPLORER_URL || "https://testnet.arcscan.app"),
+      faucetUrl: "https://faucet.circle.com",
+      // Public by design: it ends up in frontend code. Restricted by allowed
+      // domains in the Reown dashboard, not by secrecy. Unused until the
+      // WalletConnect path lands; the CSP has to be widened for that.
+      walletConnectProjectId: String(
+        process.env.ARC_WALLETCONNECT_PROJECT_ID || "",
+      ),
+      testnet: true,
+    });
+  });
+
+  // Invoice lookup by code. Returns only what the payer needs to see; the
+  // chatId that owns the invoice is deliberately not exposed, since the code
+  // travels through Telegram and could be shared.
+  app.get("/api/arc/invoice/:code", (req, res) => {
+    const code = String(req.params.code || "").trim().toUpperCase();
+
+    if (!/^[A-Z0-9]{4,32}$/.test(code)) {
+      res.status(400).json({ ok: false, error: "INVALID_CODE" });
+      return;
+    }
+
+    const state = readPaymentsState();
+    const invoice = state.pendingInvoices.find(
+      (item) =>
+        item.currency === "usdc" &&
+        String(item.code || "").toUpperCase() === code,
+    );
+
+    if (!invoice) {
+      // Covers "never existed", "already paid" and "expired" alike: telling
+      // them apart would let someone probe which codes are real.
+      res.status(404).json({ ok: false, error: "INVOICE_NOT_FOUND" });
+      return;
+    }
+
+    const expired = new Date(invoice.expiresAt).getTime() <= Date.now();
+
+    res.json({
+      ok: true,
+      code,
+      amountRaw: invoice.amountRaw,
+      invoiceId: invoice.arcInvoiceId || null,
+      expiresAt: invoice.expiresAt,
+      expired,
+    });
   });
 
   app.get("/api/radar/wallet-count", (_req, res) => {
