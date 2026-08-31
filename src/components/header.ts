@@ -576,23 +576,41 @@ export function renderHeader():
 
       ${routes
         .map(
-          route => `
-            <a
-              href="${route.path}"
-              data-route="${route.path}"
-              class="${
+          route => {
+            const isArc =
+              route.name === 'arc';
+
+            const classes =
+              [
                 route.name === active.name
                   ? 'active'
-                  : ''
-              }"
-            >
-              <span
-                data-route-label="${route.path}"
+                  : '',
+                isArc
+                  ? 'nav-featured'
+                  : '',
+              ]
+                .filter(Boolean)
+                .join(' ');
+
+            return `
+              <a
+                href="${route.path}"
+                data-route="${route.path}"
+                class="${classes}"
               >
-                ${route.title}
-              </span>
-            </a>
-          `
+                ${
+                  isArc
+                    ? '<i class="nav-featured-dot"></i>'
+                    : ''
+                }
+                <span
+                  data-route-label="${route.path}"
+                >
+                  ${route.title}
+                </span>
+              </a>
+            `;
+          }
         )
         .join('')}
 

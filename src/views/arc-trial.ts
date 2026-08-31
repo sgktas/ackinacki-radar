@@ -157,10 +157,13 @@ function renderInvoice(
 
   box.append(rows);
 
+  // Same tab, not a new one: within the dashboard this should feel like
+  // continuing, not popping open a second browser tab. /pay still has to be a
+  // real standalone page — the bot sends this exact URL straight into
+  // Telegram, reaching people who never opened the dashboard at all — but
+  // nothing says the dashboard has to open it in a separate tab.
   const link = button('ÖDEME SAYFASINI AÇ', 'a') as HTMLAnchorElement;
   link.href = invoice.payUrl;
-  link.target = '_blank';
-  link.rel = 'noopener';
 
   box.append(
     link,

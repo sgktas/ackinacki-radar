@@ -50,6 +50,24 @@ const CATALOG:
    */
 
   [
+    'Kazanılan',
+    'Earned',
+    'Начислено',
+  ],
+
+  [
+    'Kalan',
+    'Remaining',
+    'Осталось',
+  ],
+
+  [
+    'ARC TESTNET · SINIRLI TEKLİF',
+    'ARC TESTNET · LIMITED OFFER',
+    'ARC TESTNET · ОГРАНИЧЕННОЕ ПРЕДЛОЖЕНИЕ',
+  ],
+
+  [
     'Arc · Hediye',
     'Arc · Free',
     'Arc · Бонус',

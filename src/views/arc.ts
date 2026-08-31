@@ -11,6 +11,10 @@
 // until we have that toolkit we use the name in text and a neutral glyph. That
 // also keeps our product visually distinct from the network it runs on, which
 // is what their guidelines ask for.
+//
+// The gold accent below is the site's own "premium" language — the same one
+// the Cloud Miner console uses for its "PREMIUM CONSOLE" badge — reused here
+// so the page reads as a genuine feature rather than a flat info panel.
 
 import '../styles/arc-page.css';
 
@@ -55,6 +59,14 @@ function glyph(): SVGSVGElement {
   svg.setAttribute('class', 'arcp-glyph');
   svg.setAttribute('aria-hidden', 'true');
 
+  const ring = document.createElementNS(NS, 'circle');
+  ring.setAttribute('cx', '20');
+  ring.setAttribute('cy', '20');
+  ring.setAttribute('r', '18.25');
+  ring.setAttribute('fill', 'none');
+  ring.setAttribute('class', 'arcp-glyph-ring');
+  ring.setAttribute('stroke-width', '1');
+
   const arc = document.createElementNS(NS, 'path');
   arc.setAttribute('d', 'M5 30 A 17 17 0 0 1 35 30');
   arc.setAttribute('fill', 'none');
@@ -68,25 +80,31 @@ function glyph(): SVGSVGElement {
   dot.setAttribute('r', '2.6');
   dot.setAttribute('fill', 'currentColor');
 
-  svg.append(arc, dot);
+  svg.append(ring, arc, dot);
 
   return svg;
+}
+
+function badge(text: string): HTMLElement {
+  const b = el('div', 'arcp-badge');
+  b.append(el('i', 'arcp-badge-dot'), el('span', undefined, text));
+  return b;
 }
 
 function step(index: string, title: string, body: Node[]): HTMLElement {
   const box = el('div', 'arcp-step');
 
-  const head = el('div', 'arcp-step-head');
-  head.append(
-    el('span', 'arcp-step-index', index),
-    el('span', 'arcp-step-title', title),
-  );
+  const marker = el('div', 'arcp-step-marker');
+  marker.append(el('span', undefined, index));
 
-  box.append(head);
+  const content = el('div', 'arcp-step-content');
+  content.append(el('h3', 'arcp-step-title', title));
 
-  const content = el('div', 'arcp-step-body');
-  content.append(...body);
-  box.append(content);
+  const inner = el('div', 'arcp-step-body');
+  inner.append(...body);
+  content.append(inner);
+
+  box.append(marker, content);
 
   return box;
 }
@@ -112,10 +130,13 @@ export function renderArc(): HTMLElement {
   // --- hero ---------------------------------------------------------
 
   const hero = el('section', 'arcp-hero');
+  hero.append(el('i', 'arcp-hero-corner tl'), el('i', 'arcp-hero-corner tr'));
+
+  const heroInner = el('div', 'arcp-hero-inner');
 
   const heroText = el('div', 'arcp-hero-text');
   heroText.append(
-    el('span', 'arcp-kicker', 'ARC TESTNET'),
+    badge('ARC TESTNET · SINIRLI TEKLİF'),
     el('h1', 'arcp-title', 'Arc üzerinde USDC ile öde, 3 gün hediye al'),
     el(
       'p',
@@ -129,7 +150,8 @@ export function renderArc(): HTMLElement {
   const heroMark = el('div', 'arcp-hero-mark');
   heroMark.append(glyph());
 
-  hero.append(heroText, heroMark);
+  heroInner.append(heroText, heroMark);
+  hero.append(heroInner);
   view.append(hero);
 
   // --- the trial card, same component the plans page uses ------------
