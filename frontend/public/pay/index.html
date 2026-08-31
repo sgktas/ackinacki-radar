@@ -151,7 +151,7 @@
   button[disabled] { opacity: .45; cursor: not-allowed; }
   button.ghost, a.btn.ghost { background: transparent; border-color: var(--line); color: var(--text); }
 
-  .wallet-icon { width: 16px; height: 16px; flex: 0 0 auto; }
+  .mm-icon { width: 20px; height: 20px; flex: 0 0 auto; }
 
   .steps { color: var(--muted); font-size: 12px; padding-left: 18px; margin: 12px 0 0; line-height: 1.6; }
   .foot { color: #4d5b64; font-size: 11px; margin-top: 18px; line-height: 1.6; }
@@ -185,10 +185,19 @@
 
   <div id="actions" class="hide">
     <button id="payBtn">
-      <svg class="wallet-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-        <rect x="2.5" y="6" width="19" height="13" rx="2"/>
-        <path d="M2.5 10h19"/>
-        <circle cx="17.5" cy="14.5" r="1.1" fill="currentColor" stroke="none"/>
+      <svg class="mm-icon" viewBox="0 0 28 28" aria-hidden="true">
+        <path d="M23.5 4 15.4 10l1.5-3.6Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M4.5 4 12.5 10.1 11.1 6.4Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M20.2 17.7 18 21.2l4.7 1.3 1.4-4.7Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M3.9 17.8 5.3 22.5 10 21.2 7.8 17.7Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M9.7 12.4 8.4 14.4l4.6.2-.2-5Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M18.3 12.4 14 9.5l-.1 5.1 4.6-.2Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M10 21.2l2.8-1.3-2.4-1.9Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M15.2 19.9l2.8 1.3-.4-3.2Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M14 14 12.3 15.9 14 16.7 15.7 15.9Z" fill="#763D16" stroke="#763D16" stroke-width=".3"/>
+        <path d="M14 14.9 14 16.7 12.3 15.9Z" fill="#F6851B"/>
+        <path d="M14 14.9 15.7 15.9 14 16.7Z" fill="#F6851B"/>
+        <circle cx="14" cy="15.3" r="1.15" fill="#F6851B"/>
       </svg>
       <span id="t-payBtn">C&uuml;zdan&#305; ba&#287;la ve &#246;de</span>
     </button>
@@ -203,10 +212,19 @@
     <i class="corner tl"></i><i class="corner tr"></i>
     <p style="margin-top:0" id="t-noWallet">Bu taray&#305;c&#305;da c&uuml;zdan bulunamad&#305;.</p>
     <button class="ghost" id="mmBtn">
-      <svg class="wallet-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-        <rect x="2.5" y="6" width="19" height="13" rx="2"/>
-        <path d="M2.5 10h19"/>
-        <circle cx="17.5" cy="14.5" r="1.1" fill="currentColor" stroke="none"/>
+      <svg class="mm-icon" viewBox="0 0 28 28" aria-hidden="true">
+        <path d="M23.5 4 15.4 10l1.5-3.6Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M4.5 4 12.5 10.1 11.1 6.4Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M20.2 17.7 18 21.2l4.7 1.3 1.4-4.7Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M3.9 17.8 5.3 22.5 10 21.2 7.8 17.7Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M9.7 12.4 8.4 14.4l4.6.2-.2-5Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M18.3 12.4 14 9.5l-.1 5.1 4.6-.2Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M10 21.2l2.8-1.3-2.4-1.9Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M15.2 19.9l2.8 1.3-.4-3.2Z" fill="#E4761B" stroke="#E4761B" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M14 14 12.3 15.9 14 16.7 15.7 15.9Z" fill="#763D16" stroke="#763D16" stroke-width=".3"/>
+        <path d="M14 14.9 14 16.7 12.3 15.9Z" fill="#F6851B"/>
+        <path d="M14 14.9 15.7 15.9 14 16.7Z" fill="#F6851B"/>
+        <circle cx="14" cy="15.3" r="1.15" fill="#F6851B"/>
       </svg>
       <span id="t-mmBtn">MetaMask uygulamas&#305;nda a&ccedil;</span>
     </button>

@@ -164,11 +164,31 @@
 /* --- steps ------------------------------------------------------------ */
 
 .arcp-steps {
+  position: relative;
   display: grid;
   gap: 10px;
 }
 
+/* A connecting rail behind the markers turns three isolated cards into a
+   visible flow — the single biggest thing missing from the earlier version. */
+.arcp-steps::before {
+  content: "";
+  position: absolute;
+  top: 34px;
+  bottom: 34px;
+  left: 36px;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 229, 255, 0.35),
+    rgba(0, 229, 255, 0.08)
+  );
+}
+
 .arcp-step {
+  position: relative;
+  z-index: 1;
+
   display: flex;
   align-items: flex-start;
   gap: 16px;
@@ -187,6 +207,8 @@
 }
 
 .arcp-step-marker {
+  position: relative;
+
   flex: 0 0 auto;
   display: grid;
   place-items: center;
@@ -197,10 +219,29 @@
 
   border: 1px solid rgba(0, 229, 255, 0.28);
   border-radius: 50%;
-  background: rgba(0, 229, 255, 0.05);
+  background: var(--panel);
+  box-shadow: 0 0 0 4px var(--panel);
 
   color: #00d8ee;
-  font: 700 12px "JetBrains Mono", monospace;
+}
+
+.arcp-step-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.arcp-step-num {
+  position: absolute;
+  right: -3px;
+  bottom: -5px;
+
+  padding: 1px 4px;
+
+  border: 1px solid rgba(0, 229, 255, 0.35);
+  background: var(--bg);
+
+  color: #00d8ee;
+  font: 700 8px "JetBrains Mono", monospace;
 }
 
 .arcp-step-content {
@@ -227,6 +268,42 @@
   font-size: 13px;
   line-height: 1.65;
   color: #93a7b0;
+}
+
+/* --- live uptake stat ---------------------------------------------- */
+
+.arcp-stat {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  margin: 16px 2px 0;
+}
+
+.arcp-stat[hidden] {
+  display: none;
+}
+
+.arcp-stat-text {
+  flex: 0 0 auto;
+  color: #71808b;
+  font: 700 10px "JetBrains Mono", monospace;
+  letter-spacing: 0.04em;
+}
+
+.arcp-stat-bar {
+  flex: 1 1 auto;
+  height: 3px;
+  max-width: 180px;
+  background: rgba(0, 229, 255, 0.08);
+  overflow: hidden;
+}
+
+.arcp-stat-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #00d8ee, #9dff6b);
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.4);
 }
 
 /* --- facts ------------------------------------------------------------ */
@@ -340,6 +417,10 @@
   .arcp-glyph {
     width: 34px;
     height: 34px;
+  }
+
+  .arcp-steps::before {
+    left: 32px;
   }
 
   .arcp-step {

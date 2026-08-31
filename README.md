@@ -64,6 +64,13 @@ src/
     qr.ts               wallet-approval QR rendering
 ```
 
+## Frontend
+
+The dashboard SPA lives in `frontend/` (Vite + plain TypeScript, no
+framework) — folded in as its own subtree from a formerly separate repo, kept
+here because it deploys to the same VPS as part of the same project. It has
+its own README with its own build/deploy notes.
+
 ## Running it
 
 ```bash
