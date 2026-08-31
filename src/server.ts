@@ -38,6 +38,7 @@ import {
 } from "./services/tonPayments";
 import {
   codeToInvoiceId,
+  formatUsdcAmount,
   usdToUsdcRaw,
 } from "./services/arcPayments";
 import { getChainEpochClock } from "./services/epochClock";
@@ -2662,6 +2663,7 @@ function formatAdminPaymentAmount(
     if (currency === "nackl") return formatNacklAmount(raw);
     if (currency === "ton") return formatTonAmount(raw);
     if (currency === "usdt") return formatUsdtAmount(raw);
+    if (currency === "usdc") return `${formatUsdcAmount(raw)} USDC`;
   } catch {
     // Preserve the raw amount if an old record has an unexpected format.
   }
