@@ -1,0 +1,354 @@
+/* The Arc page. Same HUD vocabulary as the rest of the dashboard, with the
+ * site's own "premium" accent (gold — the same one the Cloud Miner console
+ * uses for its "PREMIUM CONSOLE" badge) reused for the hero, so the page reads
+ * as a genuine feature rather than a flat info panel. Nothing here imitates
+ * Arc's own brand — the glyph is ours. */
+
+.arcp-view {
+  padding-bottom: 40px;
+}
+
+/* --- hero ---------------------------------------------------------- */
+
+.arcp-hero {
+  position: relative;
+  overflow: hidden;
+
+  margin: 22px 0 26px;
+  padding: 30px 32px;
+
+  border: 1px solid rgba(0, 229, 255, 0.14);
+  background:
+    radial-gradient(
+      circle at 82% 12%,
+      rgba(0, 229, 255, 0.09),
+      transparent 55%
+    ),
+    linear-gradient(
+      160deg,
+      rgba(226, 201, 108, 0.05),
+      rgba(0, 229, 255, 0.02) 45%,
+      transparent 80%
+    ),
+    var(--panel);
+}
+
+.arcp-hero-corner {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  pointer-events: none;
+}
+
+.arcp-hero-corner.tl {
+  top: -1px;
+  left: -1px;
+  border-top: 1px solid rgba(0, 229, 255, 0.55);
+  border-left: 1px solid rgba(0, 229, 255, 0.55);
+}
+
+.arcp-hero-corner.tr {
+  top: -1px;
+  right: -1px;
+  border-top: 1px solid rgba(0, 229, 255, 0.55);
+  border-right: 1px solid rgba(0, 229, 255, 0.55);
+}
+
+.arcp-hero-inner {
+  position: relative;
+  z-index: 1;
+
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 28px;
+}
+
+.arcp-hero-text {
+  min-width: 0;
+}
+
+.arcp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+
+  margin-bottom: 16px;
+  padding: 5px 10px;
+
+  border: 1px solid rgba(226, 201, 108, 0.32);
+  border-radius: 3px;
+  background: linear-gradient(135deg, rgba(226, 201, 108, 0.12), rgba(226, 201, 108, 0.02));
+  box-shadow: inset 0 0 16px rgba(226, 201, 108, 0.05);
+
+  color: #e8d77f;
+  font: 800 9px "JetBrains Mono", monospace;
+  letter-spacing: 0.14em;
+}
+
+.arcp-badge-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+
+  background: #e8d77f;
+  box-shadow: 0 0 8px rgba(226, 201, 108, 0.8);
+
+  animation: arcp-badge-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes arcp-badge-pulse {
+  50% {
+    opacity: 0.5;
+    box-shadow: 0 0 3px rgba(226, 201, 108, 0.35);
+  }
+}
+
+.arcp-title {
+  margin: 0 0 12px;
+  max-width: 22ch;
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.22;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.arcp-lead {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 14px;
+  line-height: 1.65;
+  color: #93a7b0;
+}
+
+.arcp-hero-mark {
+  position: relative;
+
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+
+  width: 104px;
+  height: 104px;
+
+  border: 1px solid rgba(0, 229, 255, 0.16);
+  background: rgba(0, 229, 255, 0.03);
+}
+
+.arcp-glyph {
+  width: 50px;
+  height: 50px;
+  color: #00e5ff;
+}
+
+.arcp-glyph-ring {
+  stroke: rgba(0, 229, 255, 0.22);
+}
+
+/* --- sections --------------------------------------------------------- */
+
+.arcp-section-title {
+  margin: 32px 0 14px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #5f7079;
+  font-family: "JetBrains Mono", monospace;
+}
+
+/* --- steps ------------------------------------------------------------ */
+
+.arcp-steps {
+  display: grid;
+  gap: 10px;
+}
+
+.arcp-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+
+  padding: 18px 20px;
+
+  border: 1px solid rgba(0, 229, 255, 0.09);
+  background: var(--panel);
+
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.arcp-step:hover {
+  border-color: rgba(0, 229, 255, 0.24);
+  background: rgba(0, 229, 255, 0.02);
+}
+
+.arcp-step-marker {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+
+  width: 34px;
+  height: 34px;
+  margin-top: 1px;
+
+  border: 1px solid rgba(0, 229, 255, 0.28);
+  border-radius: 50%;
+  background: rgba(0, 229, 255, 0.05);
+
+  color: #00d8ee;
+  font: 700 12px "JetBrains Mono", monospace;
+}
+
+.arcp-step-content {
+  min-width: 0;
+}
+
+.arcp-step-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.arcp-step-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.arcp-text {
+  margin: 0;
+  max-width: 72ch;
+  font-size: 13px;
+  line-height: 1.65;
+  color: #93a7b0;
+}
+
+/* --- facts ------------------------------------------------------------ */
+
+.arcp-facts {
+  border: 1px solid rgba(0, 229, 255, 0.08);
+}
+
+.arcp-fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+}
+
+.arcp-fact + .arcp-fact {
+  border-top: 1px solid rgba(0, 229, 255, 0.07);
+}
+
+.arcp-fact-key {
+  color: #71808b;
+  font: 700 9px "JetBrains Mono", monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.arcp-fact-value {
+  font-size: 13px;
+  color: var(--text);
+  text-align: right;
+  word-break: break-all;
+}
+
+/* --- bits ------------------------------------------------------------- */
+
+.arcp-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 16px;
+  border: 1px solid rgba(0, 229, 255, 0.26);
+  background: rgba(0, 229, 255, 0.04);
+  color: #9edce5;
+  font: 700 10px "JetBrains Mono", monospace;
+  letter-spacing: 0.12em;
+  text-decoration: none;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.arcp-btn:hover {
+  border-color: rgba(0, 229, 255, 0.5);
+  background: rgba(0, 229, 255, 0.075);
+  color: #d6f6fb;
+}
+
+.arcp-link {
+  color: #00d8ee;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(0, 216, 238, 0.28);
+}
+
+.arcp-link:hover {
+  border-bottom-color: #00d8ee;
+}
+
+.arcp-link.mono {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+}
+
+.arcp-disclaimer {
+  margin: 26px 0 0;
+  max-width: 78ch;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #5b6870;
+}
+
+/* The trial card carries its own margins for the plans page; on a page that
+   opens with a hero it needs a little more room above. */
+.arcp-view .arc-trial {
+  margin-top: 22px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arcp-badge-dot {
+    animation: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .arcp-hero {
+    padding: 22px 18px;
+  }
+
+  .arcp-hero-inner {
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .arcp-title {
+    font-size: 23px;
+    max-width: none;
+  }
+
+  .arcp-hero-mark {
+    width: 68px;
+    height: 68px;
+  }
+
+  .arcp-glyph {
+    width: 34px;
+    height: 34px;
+  }
+
+  .arcp-step {
+    padding: 15px 16px;
+  }
+
+  .arcp-btn {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+  }
+}

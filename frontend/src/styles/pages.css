@@ -1,0 +1,59 @@
+.page-view {
+  min-height:
+    calc(
+      100vh
+      - 82px
+      - 58px
+      - 92px
+      - 104px
+    );
+
+  border:
+    1px solid var(--line);
+
+  background:
+    linear-gradient(
+      145deg,
+      rgba(10,16,25,.82),
+      rgba(6,10,16,.74)
+    );
+
+  padding:
+    clamp(30px, 5vw, 72px);
+}
+
+.page-heading {
+  max-width: 740px;
+}
+
+.eyebrow {
+  color: var(--lime);
+
+  font:
+    600 11px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing: .18em;
+}
+
+.page-heading h1 {
+  margin:
+    14px 0 10px;
+
+  font-size:
+    clamp(34px, 6vw, 64px);
+
+  line-height: 1;
+}
+
+.page-heading p {
+  max-width: 620px;
+
+  margin: 0;
+
+  color: var(--muted);
+
+  font-size: 14px;
+  line-height: 1.7;
+}

@@ -1,0 +1,4866 @@
+.cloud-auth-view {
+  width: 100%;
+
+  --auth-cyan: #00e5ff;
+  --auth-green: #9dff6b;
+  --auth-amber: #e2c96c;
+  --auth-red: #ff796f;
+}
+
+
+/* =================================================
+   PREMIUM MINER PROGRESS CARD
+   ================================================= */
+
+.cloud-miner-list {
+  padding: 10px 14px 14px;
+}
+
+.cloud-miner-row {
+  position: relative;
+  min-height: 172px;
+  overflow: hidden;
+  align-items: stretch;
+  gap: 22px;
+  margin: 10px 0;
+  padding: 20px;
+  border: 1px solid rgba(0,229,255,.13) !important;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(0,229,255,.065), transparent 34%),
+    linear-gradient(135deg, rgba(7,22,29,.96), rgba(3,11,16,.98));
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.025),
+    0 12px 34px rgba(0,0,0,.18);
+}
+
+.cloud-miner-row::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(180deg, #00e5ff, #9dff6b 72%, transparent);
+  box-shadow: 0 0 16px rgba(0,229,255,.5);
+}
+
+.cloud-miner-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cloud-miner-name {
+  color: #edf9fb;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: .02em;
+  text-shadow: 0 0 18px rgba(0,229,255,.12);
+}
+
+.cloud-miner-metrics {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(118px, 150px);
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.cloud-miner-tap-metric,
+.cloud-miner-epoch-metric {
+  border: 1px solid rgba(0,229,255,.11);
+  background: rgba(0,10,15,.56);
+  box-shadow: inset 0 0 24px rgba(0,229,255,.018);
+}
+
+.cloud-miner-tap-metric {
+  padding: 13px 14px 11px;
+}
+
+.cloud-miner-tap-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 9px;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.cloud-miner-tap-head span,
+.cloud-miner-epoch-metric > span {
+  color: #75919b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .12em;
+}
+
+.cloud-miner-tap-head strong {
+  color: #dff9ee;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: .015em;
+}
+
+.cloud-miner-tap-track {
+  position: relative;
+  height: 28px;
+  overflow: hidden;
+  border: 1px solid rgba(0,229,255,.13);
+  background:
+    repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), rgba(255,255,255,.035) 10%),
+    rgba(0,0,0,.45);
+  box-shadow: inset 0 3px 10px rgba(0,0,0,.35);
+}
+
+.cloud-miner-tap-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 2px;
+  background: linear-gradient(90deg, #00aeca 0%, #00e5ff 48%, #9dff6b 100%);
+  box-shadow: 0 0 18px rgba(0,229,255,.34);
+  transition: width .65s ease;
+}
+
+.cloud-miner-tap-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 20%, rgba(255,255,255,.28) 48%, transparent 72%);
+  transform: translateX(-100%);
+  animation: cloud-miner-progress-sheen 3.4s ease-in-out infinite;
+}
+
+@keyframes cloud-miner-progress-sheen {
+  55%, 100% { transform: translateX(130%); }
+}
+
+.cloud-miner-tap-percent {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #f4fff8;
+  font: 900 12px "JetBrains Mono", monospace;
+  letter-spacing: .06em;
+  text-shadow: 0 1px 4px rgba(0,0,0,.85);
+}
+
+.cloud-miner-tap-remaining {
+  display: block;
+  margin-top: 7px;
+  color: #93aeb6;
+  font: 700 11px "JetBrains Mono", monospace;
+  text-align: right;
+}
+
+.cloud-miner-epoch-metric {
+  display: grid;
+  place-content: center;
+  min-height: 92px;
+  padding: 10px;
+  text-align: center;
+}
+
+.cloud-miner-epoch-metric strong {
+  margin: 3px 0 1px;
+  color: #9dff6b;
+  font: 900 31px "JetBrains Mono", monospace;
+  line-height: 1;
+  text-shadow: 0 0 18px rgba(157,255,107,.22);
+}
+
+.cloud-miner-epoch-metric small {
+  color: #688089;
+  font: 700 9px "JetBrains Mono", monospace;
+  letter-spacing: .09em;
+}
+
+.cloud-miner-meta {
+  margin-top: 11px;
+  gap: 6px 18px;
+}
+
+.cloud-miner-meta span {
+  color: #cde0e4 !important;
+  font-size: 13px !important;
+  line-height: 1.45;
+}
+
+.cloud-miner-right {
+  justify-content: space-between;
+  padding-left: 4px;
+}
+
+.cloud-miner-status {
+  padding: 7px 11px;
+  font-size: 10px;
+  font-weight: 800;
+  box-shadow: inset 0 0 14px currentColor;
+}
+
+@media (max-width: 700px) {
+  .cloud-miner-row {
+    flex-direction: column;
+    padding: 17px;
+  }
+
+  .cloud-miner-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-miner-epoch-metric {
+    min-height: 78px;
+  }
+
+  .cloud-miner-right {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    padding-left: 0;
+  }
+}
+
+
+/* =================================================
+   PREMIUM CLOUD CONSOLE V2
+   ================================================= */
+
+.cloud-auth-view {
+  position: relative;
+  isolation: isolate;
+  padding: clamp(14px, 2vw, 28px);
+  --premium-panel: rgba(4, 14, 20, .92);
+  --premium-panel-soft: rgba(7, 22, 29, .78);
+  --premium-line: rgba(0, 229, 255, .14);
+  --premium-line-hot: rgba(0, 229, 255, .30);
+  --premium-glow: 0 18px 50px rgba(0, 0, 0, .28);
+  background:
+    radial-gradient(circle at 12% 8%, rgba(0, 229, 255, .055), transparent 27%),
+    radial-gradient(circle at 88% 20%, rgba(157, 255, 107, .035), transparent 25%),
+    linear-gradient(180deg, rgba(2, 9, 14, .12), rgba(2, 9, 14, .48));
+}
+
+.cloud-auth-view::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  opacity: .26;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(0, 229, 255, .025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 229, 255, .025) 1px, transparent 1px);
+  background-size: 38px 38px;
+  mask-image: linear-gradient(180deg, #000, transparent 82%);
+}
+
+.cloud-auth-shell {
+  width: 100%;
+  max-width: 1380px;
+  gap: 18px;
+}
+
+.cloud-auth-heading {
+  position: relative;
+  min-height: 136px;
+  overflow: hidden;
+  padding: 26px 30px;
+  border: 1px solid var(--premium-line);
+  border-radius: 12px;
+  background:
+    linear-gradient(110deg, rgba(0, 229, 255, .09), rgba(7, 18, 25, .92) 42%, rgba(4, 10, 15, .98)),
+    var(--premium-panel);
+  box-shadow: var(--premium-glow), inset 0 1px 0 rgba(255, 255, 255, .035);
+}
+
+.cloud-auth-heading::after {
+  content: "CLOUD / MAINNET";
+  position: absolute;
+  right: 112px;
+  bottom: -10px;
+  color: rgba(0, 229, 255, .035);
+  font: 900 clamp(30px, 5vw, 68px) "JetBrains Mono", monospace;
+  letter-spacing: -.08em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.cloud-auth-heading h1 {
+  position: relative;
+  z-index: 1;
+  margin: 8px 0 5px;
+  color: #f0fbfd;
+  font-size: clamp(31px, 3vw, 43px);
+  letter-spacing: -.025em;
+  text-shadow: 0 0 28px rgba(0, 229, 255, .13);
+}
+
+.cloud-auth-heading p {
+  position: relative;
+  z-index: 1;
+  color: #9aadb4;
+  font-size: 13px;
+}
+
+.cloud-auth-status {
+  position: relative;
+  z-index: 1;
+  padding: 10px 13px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: rgba(3, 12, 17, .72);
+  box-shadow: inset 0 0 18px color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.cloud-auth-card {
+  min-height: 430px;
+  border: 0;
+  background: transparent;
+}
+
+.cloud-session-panel {
+  min-height: 0;
+  justify-content: flex-start;
+  gap: 18px;
+  padding: 0;
+}
+
+.cloud-session-top {
+  position: relative;
+  min-height: 164px;
+  overflow: hidden;
+  align-items: center;
+  padding: 28px 30px;
+  border: 1px solid var(--premium-line);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 86% 20%, rgba(157, 255, 107, .065), transparent 24%),
+    linear-gradient(120deg, rgba(0, 229, 255, .055), rgba(5, 16, 23, .96) 50%, rgba(3, 11, 16, .98));
+  box-shadow: var(--premium-glow), inset 0 1px 0 rgba(255, 255, 255, .03);
+}
+
+.cloud-session-top::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(180deg, #00e5ff, #9dff6b 70%, transparent);
+  box-shadow: 0 0 22px rgba(0, 229, 255, .45);
+}
+
+.cloud-session-top::after {
+  content: "";
+  position: absolute;
+  right: 11%;
+  top: 50%;
+  width: 170px;
+  aspect-ratio: 1;
+  border: 1px solid rgba(0, 229, 255, .07);
+  border-radius: 50%;
+  transform: translateY(-50%);
+  box-shadow:
+    0 0 0 24px rgba(0, 229, 255, .018),
+    0 0 0 52px rgba(0, 229, 255, .012);
+  pointer-events: none;
+}
+
+.cloud-session-identity,
+.cloud-session-actions {
+  position: relative;
+  z-index: 1;
+}
+
+.cloud-session-top h2 {
+  margin: 9px 0 7px;
+  color: #f2fbfc;
+  font-size: clamp(27px, 3vw, 38px);
+  letter-spacing: -.025em;
+}
+
+.cloud-session-top p {
+  color: #b8c9ce !important;
+  font-size: 13px !important;
+}
+
+.cloud-session-network {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  color: #91a9b1;
+  font: 800 10px "JetBrains Mono", monospace;
+  letter-spacing: .11em;
+}
+
+.cloud-session-network i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #9dff6b;
+  box-shadow: 0 0 12px rgba(157, 255, 107, .72);
+  animation: cloud-premium-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes cloud-premium-pulse {
+  50% { opacity: .52; box-shadow: 0 0 5px rgba(157, 255, 107, .35); }
+}
+
+.cloud-session-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cloud-console-tier {
+  padding: 9px 12px;
+  border: 1px solid rgba(226, 201, 108, .26);
+  border-radius: 6px;
+  color: #e8d77f;
+  background: linear-gradient(135deg, rgba(226, 201, 108, .10), rgba(226, 201, 108, .025));
+  font: 800 9px "JetBrains Mono", monospace;
+  letter-spacing: .12em;
+  box-shadow: inset 0 0 18px rgba(226, 201, 108, .035);
+}
+
+.cloud-logout-button {
+  min-height: 38px;
+  border-radius: 6px;
+  transition: border-color .2s ease, color .2s ease, background .2s ease;
+}
+
+.cloud-logout-button:hover {
+  border-color: rgba(255, 121, 111, .52);
+  color: #ffc0ba;
+  background: rgba(255, 121, 111, .08);
+}
+
+.cloud-session-grid {
+  gap: 14px;
+}
+
+.cloud-session-grid article {
+  position: relative;
+  min-height: 144px;
+  overflow: hidden;
+  padding: 22px 24px;
+  border: 1px solid var(--premium-line);
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(0, 229, 255, .065), transparent 38%),
+    linear-gradient(145deg, rgba(7, 22, 29, .92), rgba(3, 11, 16, .98));
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .18), inset 0 1px 0 rgba(255, 255, 255, .025);
+  transition: transform .22s ease, border-color .22s ease;
+}
+
+.cloud-session-grid article:hover {
+  transform: translateY(-2px);
+  border-color: var(--premium-line-hot);
+}
+
+.cloud-session-grid article::after {
+  position: absolute;
+  right: 17px;
+  top: 11px;
+  color: rgba(255, 255, 255, .055);
+  font: 900 38px "JetBrains Mono", monospace;
+}
+
+.cloud-session-grid article:nth-child(1)::after { content: "01"; }
+.cloud-session-grid article:nth-child(2)::after { content: "02"; }
+.cloud-session-grid article:nth-child(3)::after { content: "03"; }
+
+.cloud-session-grid article[data-accent="green"] {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(157, 255, 107, .065), transparent 38%),
+    linear-gradient(145deg, rgba(7, 22, 29, .92), rgba(3, 11, 16, .98));
+}
+
+.cloud-session-grid article[data-accent="gold"] {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(226, 201, 108, .07), transparent 38%),
+    linear-gradient(145deg, rgba(7, 22, 29, .92), rgba(3, 11, 16, .98));
+}
+
+.cloud-session-grid span {
+  color: #9db2b8 !important;
+  font-size: 11px !important;
+  letter-spacing: .13em;
+}
+
+.cloud-session-grid b {
+  position: relative;
+  z-index: 1;
+  margin-top: 13px;
+  color: #9dff6b;
+  font-size: clamp(25px, 2.4vw, 34px);
+  text-shadow: 0 0 18px rgba(157, 255, 107, .18);
+}
+
+.cloud-session-grid small {
+  color: #789098 !important;
+  font-size: 10px !important;
+  letter-spacing: .1em;
+}
+
+.cloud-section-divider {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 13px;
+  margin: 6px 2px -2px;
+}
+
+.cloud-section-divider span,
+.cloud-section-divider b {
+  color: #8fa7ae;
+  font: 800 10px "JetBrains Mono", monospace;
+  letter-spacing: .16em;
+}
+
+.cloud-section-divider b {
+  color: #49626b;
+}
+
+.cloud-section-divider i {
+  height: 1px;
+  background: linear-gradient(90deg, rgba(0, 229, 255, .30), rgba(0, 229, 255, .03));
+}
+
+.cloud-readonly-grid,
+.cloud-observability-grid {
+  gap: 16px;
+}
+
+.cloud-readonly-grid {
+  grid-template-columns: minmax(0, 1.65fr) minmax(300px, .70fr);
+}
+
+.cloud-data-card,
+.cloud-observe-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--premium-line);
+  border-radius: 10px;
+  background:
+    linear-gradient(145deg, rgba(7, 21, 28, .82), rgba(3, 11, 16, .96));
+  box-shadow: var(--premium-glow), inset 0 1px 0 rgba(255, 255, 255, .025);
+}
+
+.cloud-data-card::before,
+.cloud-observe-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0, 229, 255, .52), transparent);
+  opacity: .55;
+}
+
+.cloud-data-card > header,
+.cloud-observe-head {
+  min-height: 82px;
+  padding: 18px 20px;
+  border-bottom: 1px solid rgba(0, 229, 255, .10);
+  background: rgba(0, 229, 255, .018);
+}
+
+.cloud-data-card h3,
+.cloud-observe-head h3 {
+  margin-top: 6px;
+  color: #e5f2f4;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.cloud-data-kicker {
+  color: #86a0a8 !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  letter-spacing: .15em;
+}
+
+.cloud-readonly-badge,
+.cloud-cycle-status,
+.cloud-health-status {
+  padding: 7px 10px;
+  border-radius: 5px;
+  font-size: 9px;
+  font-weight: 800;
+  box-shadow: inset 0 0 16px rgba(0, 229, 255, .025);
+}
+
+.cloud-connect-form {
+  padding: 22px 20px 20px;
+  border-top: 1px solid rgba(0, 229, 255, .11);
+  background:
+    linear-gradient(135deg, rgba(0, 229, 255, .032), transparent),
+    rgba(0, 7, 11, .42);
+}
+
+.cloud-connect-form > label {
+  color: #9cb0b6;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+
+.cloud-connect-field {
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.cloud-connect-field input {
+  min-height: 50px;
+  border-radius: 6px;
+  border-color: rgba(0, 229, 255, .16);
+  color: #eaf8fa;
+  background: rgba(0, 7, 11, .64);
+  font-size: 13px;
+  box-shadow: inset 0 3px 14px rgba(0, 0, 0, .28);
+}
+
+.cloud-connect-field input:focus {
+  border-color: rgba(0, 229, 255, .50);
+  box-shadow: 0 0 0 3px rgba(0, 229, 255, .055), inset 0 3px 14px rgba(0, 0, 0, .28);
+}
+
+.cloud-connect-field button {
+  min-height: 50px;
+  border-radius: 6px;
+  border-color: rgba(157, 255, 107, .30);
+  color: #cfffba;
+  background: linear-gradient(135deg, rgba(157, 255, 107, .12), rgba(157, 255, 107, .035));
+  box-shadow: inset 0 0 20px rgba(157, 255, 107, .035);
+}
+
+.cloud-connect-field button:hover {
+  border-color: rgba(157, 255, 107, .58);
+  background: rgba(157, 255, 107, .13);
+}
+
+.cloud-connect-message {
+  color: #92a7ad;
+  font-size: 12px;
+}
+
+.cloud-subscription-view {
+  display: grid;
+  gap: 9px;
+  padding: 16px;
+}
+
+.cloud-sub-row {
+  min-height: 59px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, .055);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .014);
+}
+
+.cloud-sub-row span {
+  color: #8ea4aa !important;
+  font-size: 10px !important;
+  letter-spacing: .12em;
+}
+
+.cloud-sub-row b {
+  color: #ecf7f8;
+  font-size: 15px !important;
+}
+
+.cloud-observability-grid {
+  grid-template-columns: minmax(0, 1.2fr) minmax(360px, .8fr);
+}
+
+.cloud-cycle-card {
+  background:
+    radial-gradient(circle at 50% 20%, rgba(0, 229, 255, .055), transparent 34%),
+    linear-gradient(145deg, rgba(7, 21, 28, .86), rgba(3, 11, 16, .97));
+}
+
+.cloud-cycle-dates {
+  padding: 24px 24px 18px;
+  gap: 24px;
+}
+
+.cloud-cycle-dates > div:not(.cloud-cycle-center) {
+  padding: 13px 14px;
+  border: 1px solid rgba(255, 255, 255, .045);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, .16);
+}
+
+.cloud-cycle-dates span,
+.cloud-cycle-dates small,
+.cloud-cycle-center span {
+  color: #9eb0b5 !important;
+  font-size: 10px !important;
+}
+
+.cloud-cycle-dates b {
+  color: #e8f3f5;
+  font-size: 13px;
+}
+
+.cloud-cycle-center strong {
+  color: #f0fbfc;
+  font-size: clamp(28px, 3vw, 42px);
+  font-weight: 800;
+  text-shadow: 0 0 22px rgba(0, 229, 255, .18);
+}
+
+.cloud-cycle-progress {
+  padding: 0 24px 22px;
+  gap: 12px;
+}
+
+.cloud-cycle-progress > div {
+  height: 12px;
+  border-radius: 999px;
+  border-color: rgba(0, 229, 255, .14);
+  background: rgba(0, 0, 0, .32);
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, .35);
+}
+
+.cloud-cycle-progress > div i {
+  border-radius: inherit;
+  background: linear-gradient(90deg, #00bcd4, #00e5ff, #9dff6b);
+  box-shadow: 0 0 14px rgba(0, 229, 255, .30);
+}
+
+.cloud-cycle-metrics {
+  gap: 8px;
+  padding: 14px;
+  border-top-color: rgba(0, 229, 255, .09);
+}
+
+.cloud-cycle-metrics > div {
+  min-height: 76px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, .05);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .012);
+}
+
+.cloud-cycle-metrics b {
+  color: #edf7f8;
+  font-size: 15px;
+}
+
+.cloud-cycle-metrics span {
+  color: #91a6ac !important;
+  font-size: 10px !important;
+}
+
+.cloud-health-metrics {
+  gap: 9px;
+  padding: 16px;
+}
+
+.cloud-health-metrics > div {
+  min-height: 78px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 12px;
+  border-radius: 6px;
+  border-color: rgba(255, 255, 255, .065);
+  background: linear-gradient(145deg, rgba(255, 255, 255, .025), rgba(0, 0, 0, .08));
+}
+
+.cloud-health-metrics b {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.cloud-health-metrics span {
+  color: #9aadb3 !important;
+  font-size: 9px !important;
+  letter-spacing: .07em;
+}
+
+.cloud-health-reason {
+  margin: 0 16px 15px;
+  padding: 14px 15px;
+  border-radius: 6px;
+}
+
+.cloud-health-timeline-box {
+  padding: 1px 16px 16px;
+}
+
+.cloud-health-dot {
+  width: 10px;
+  height: 10px;
+}
+
+.cloud-health-events {
+  gap: 7px;
+  padding: 12px 16px 17px;
+}
+
+.cloud-health-event {
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .016);
+}
+
+.cloud-health-event summary {
+  min-height: 44px;
+  padding: 10px 12px;
+}
+
+.cloud-reward-feed {
+  max-height: 360px;
+  padding: 10px 16px;
+}
+
+.cloud-reward-row {
+  min-height: 48px;
+  padding: 0 5px;
+}
+
+.cloud-reward-row > b {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.cloud-reward-meta span {
+  font-size: 11px !important;
+}
+
+.cloud-reward-total {
+  min-height: 68px;
+  padding: 15px 18px;
+  background: linear-gradient(90deg, rgba(157, 255, 107, .045), transparent);
+}
+
+.cloud-reward-total span {
+  color: #a6b8bd !important;
+  font-size: 10px !important;
+}
+
+.cloud-reward-total b {
+  font-size: 17px !important;
+  text-shadow: 0 0 16px rgba(157, 255, 107, .20);
+}
+
+.cloud-auth-next {
+  align-items: center;
+  gap: 14px;
+  padding: 19px 20px;
+  border-radius: 9px;
+  border-color: rgba(157, 255, 107, .16);
+  background:
+    linear-gradient(90deg, rgba(157, 255, 107, .07), rgba(0, 229, 255, .025)),
+    rgba(4, 14, 18, .82);
+  box-shadow: var(--premium-glow);
+}
+
+.cloud-auth-next b {
+  color: #e8f7ec;
+  font-size: 14px;
+}
+
+.cloud-auth-next p {
+  margin-top: 4px;
+  color: #9bafb5;
+  font-size: 12px;
+}
+
+.cloud-auth-next-badge {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border: 1px solid rgba(157, 255, 107, .20);
+  border-radius: 5px;
+  color: #aefb87;
+  font: 800 9px "JetBrains Mono", monospace;
+  letter-spacing: .10em;
+}
+
+.cloud-control-message,
+.cloud-connect-approval {
+  border-radius: 7px;
+}
+
+.cloud-login-panel {
+  min-height: 520px;
+  max-width: 980px;
+  overflow: hidden;
+  border: 1px solid var(--premium-line);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 20% 50%, rgba(0, 229, 255, .07), transparent 32%),
+    linear-gradient(135deg, rgba(7, 22, 29, .94), rgba(3, 11, 16, .98));
+  box-shadow: var(--premium-glow);
+}
+
+.cloud-login-symbol {
+  min-height: 400px;
+  background: rgba(0, 229, 255, .018);
+}
+
+.cloud-login-copy {
+  padding: 48px;
+}
+
+.cloud-telegram-button {
+  min-height: 56px;
+  border-radius: 7px;
+  background: linear-gradient(90deg, rgba(0, 229, 255, .16), rgba(0, 229, 255, .04));
+  box-shadow: inset 0 0 24px rgba(0, 229, 255, .035);
+}
+
+@media (max-width: 1100px) {
+  .cloud-readonly-grid,
+  .cloud-observability-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-cycle-card {
+    grid-column: auto;
+  }
+
+  .cloud-session-top::after {
+    right: 4%;
+  }
+}
+
+@media (max-width: 760px) {
+  .cloud-auth-view {
+    padding: 10px;
+  }
+
+  .cloud-auth-heading,
+  .cloud-session-top {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 22px;
+  }
+
+  .cloud-auth-heading::after,
+  .cloud-session-top::after {
+    display: none;
+  }
+
+  .cloud-session-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .cloud-session-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-session-grid article {
+    min-height: 125px;
+  }
+
+  .cloud-cycle-dates {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-cycle-dates .end,
+  .cloud-cycle-center {
+    text-align: left;
+  }
+
+  .cloud-cycle-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cloud-health-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cloud-auth-next {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .cloud-auth-next-badge {
+    margin-left: 20px;
+  }
+
+  .cloud-login-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-login-copy {
+    padding: 30px 24px;
+  }
+}
+
+@media (max-width: 520px) {
+  .cloud-session-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cloud-console-tier,
+  .cloud-logout-button {
+    width: 100%;
+    text-align: center;
+  }
+
+  .cloud-connect-field {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-cycle-metrics,
+  .cloud-health-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-section-divider span {
+    font-size: 9px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud-session-network i {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud-miner-tap-fill::after {
+    animation: none;
+  }
+}
+
+
+.cloud-auth-shell {
+  max-width: 1180px;
+
+  margin:
+    0 auto;
+
+  display: grid;
+
+  gap: 12px;
+}
+
+
+.cloud-auth-heading {
+  min-height: 112px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  gap: 24px;
+
+  padding:
+    18px 22px;
+
+  border:
+    1px solid
+    rgba(0,229,255,.14);
+
+  background:
+    linear-gradient(
+      120deg,
+      rgba(0,229,255,.035),
+      rgba(7,11,18,.88) 42%,
+      rgba(4,8,13,.94)
+    );
+}
+
+
+.cloud-auth-kicker,
+.cloud-login-eyebrow,
+.cloud-session-eyebrow {
+  color:
+    var(--auth-cyan);
+
+  font:
+    600 10px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .16em;
+}
+
+
+.cloud-auth-heading h1 {
+  margin:
+    7px 0 3px;
+
+  font:
+    700 30px
+    "Chakra Petch",
+    system-ui,
+    sans-serif;
+}
+
+
+.cloud-auth-heading p {
+  margin: 0;
+
+  color: #6e7c88;
+
+  font-size: 12px;
+}
+
+
+.cloud-auth-status {
+  display: flex;
+  align-items: center;
+
+  gap: 8px;
+
+  color: #8e9aa4;
+
+  font:
+    600 10px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .1em;
+
+  white-space: nowrap;
+}
+
+
+.cloud-auth-status i {
+  width: 6px;
+  height: 6px;
+
+  border-radius: 50%;
+
+  background:
+    currentColor;
+
+  box-shadow:
+    0 0 9px
+    currentColor;
+}
+
+
+.cloud-auth-status.ok {
+  color:
+    var(--auth-green);
+}
+
+
+.cloud-auth-status.warn {
+  color:
+    var(--auth-amber);
+}
+
+
+.cloud-auth-status.error {
+  color:
+    var(--auth-red);
+}
+
+
+.cloud-auth-card {
+  min-height: 430px;
+
+  display: grid;
+
+  align-items: stretch;
+
+  border:
+    1px solid
+    rgba(0,229,255,.13);
+
+  background:
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(0,229,255,.035),
+      transparent 55%
+    ),
+    rgba(4,8,13,.92);
+}
+
+
+.cloud-auth-loading {
+  min-height: 430px;
+
+  display: flex;
+  flex-direction: column;
+
+  align-items: center;
+  justify-content: center;
+
+  gap: 11px;
+}
+
+
+.cloud-auth-loading b {
+  color: #aebdc5;
+
+  font:
+    600 10px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .1em;
+}
+
+
+.cloud-auth-loading small {
+  color: #53616c;
+
+  font-size: 11px;
+}
+
+
+.cloud-auth-spinner {
+  width: 34px;
+  height: 34px;
+
+  border:
+    1px solid
+    rgba(0,229,255,.15);
+
+  border-top-color:
+    var(--auth-cyan);
+
+  border-radius:
+    50%;
+
+  animation:
+    cloudSpin .8s
+    linear infinite;
+}
+
+
+.cloud-login-panel {
+  min-height: 430px;
+
+  display: grid;
+
+  grid-template-columns:
+    minmax(230px,.7fr)
+    minmax(360px,1fr);
+
+  align-items: center;
+
+  max-width: 860px;
+
+  width: 100%;
+
+  margin: auto;
+}
+
+
+.cloud-login-symbol {
+  min-height: 270px;
+
+  display: grid;
+  place-items: center;
+
+  border-right:
+    1px solid
+    rgba(0,229,255,.1);
+}
+
+
+.cloud-login-symbol svg {
+  width: 105px;
+
+  fill: none;
+
+  stroke:
+    var(--auth-green);
+
+  stroke-width: 1.6;
+
+  opacity: .75;
+
+  filter:
+    drop-shadow(
+      0 0 16px
+      rgba(157,255,107,.12)
+    );
+}
+
+
+.cloud-login-copy {
+  padding:
+    38px 42px;
+}
+
+
+.cloud-login-copy h2,
+.cloud-session-top h2 {
+  margin:
+    8px 0 9px;
+
+  font:
+    700 25px
+    "Chakra Petch",
+    system-ui,
+    sans-serif;
+}
+
+
+.cloud-login-copy > p,
+.cloud-session-top p,
+.cloud-auth-next p {
+  margin: 0;
+
+  color: #71808b;
+
+  line-height: 1.65;
+
+  font-size: 12px;
+}
+
+
+.cloud-auth-message {
+  margin-top: 17px;
+
+  padding:
+    10px 12px;
+
+  border:
+    1px solid
+    rgba(226,201,108,.22);
+
+  color:
+    #d8c880;
+
+  background:
+    rgba(226,201,108,.05);
+
+  font-size: 11px;
+
+  line-height: 1.5;
+}
+
+
+.cloud-telegram-button {
+  width: 100%;
+
+  min-height: 49px;
+
+  margin-top: 22px;
+
+  padding:
+    0 17px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  border:
+    1px solid
+    rgba(0,229,255,.28);
+
+  color:
+    #d4faff;
+
+  text-decoration: none;
+
+  background:
+    linear-gradient(
+      90deg,
+      rgba(0,229,255,.12),
+      rgba(0,229,255,.035)
+    );
+
+  font:
+    600 11px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .08em;
+}
+
+
+.cloud-telegram-button:hover {
+  border-color:
+    rgba(0,229,255,.55);
+
+  background:
+    rgba(0,229,255,.12);
+}
+
+
+.cloud-telegram-button b {
+  color:
+    var(--auth-green);
+
+  font-size: 16px;
+}
+
+
+.cloud-login-note {
+  display: block;
+
+  margin-top: 11px;
+
+  color: #45525d;
+
+  font-size: 11px;
+}
+
+
+.cloud-session-panel {
+  min-height: 430px;
+
+  padding:
+    30px;
+
+  display: flex;
+  flex-direction: column;
+
+  justify-content: center;
+
+  gap: 25px;
+}
+
+
+.cloud-session-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+
+  gap: 20px;
+}
+
+
+.cloud-logout-button {
+  min-height: 38px;
+
+  padding:
+    0 15px;
+
+  border:
+    1px solid
+    rgba(255,121,111,.25);
+
+  color:
+    #e79790;
+
+  background:
+    rgba(255,121,111,.035);
+
+  cursor: pointer;
+
+  font:
+    600 10px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .08em;
+}
+
+
+.cloud-session-grid {
+  display: grid;
+
+  grid-template-columns:
+    repeat(3,1fr);
+
+  gap: 9px;
+}
+
+
+.cloud-session-grid article {
+  min-height: 130px;
+
+  padding:
+    20px;
+
+  display: flex;
+  flex-direction: column;
+
+  justify-content: center;
+
+  border:
+    1px solid
+    rgba(0,229,255,.11);
+
+  background:
+    rgba(0,229,255,.018);
+}
+
+
+.cloud-session-grid span {
+  color: #60707d;
+
+  font:
+    10px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .09em;
+}
+
+
+.cloud-session-grid b {
+  margin-top: 10px;
+
+  color:
+    var(--auth-green);
+
+  font:
+    700 24px
+    "JetBrains Mono",
+    monospace;
+}
+
+
+.cloud-session-grid b.verified {
+  font-size: 16px;
+}
+
+
+.cloud-session-grid small {
+  margin-top: 7px;
+
+  color: #3e4b55;
+
+  font:
+    9px
+    "JetBrains Mono",
+    monospace;
+}
+
+
+.cloud-auth-next {
+  display: flex;
+  align-items: flex-start;
+
+  gap: 12px;
+
+  padding:
+    15px 17px;
+
+  border:
+    1px solid
+    rgba(157,255,107,.11);
+
+  background:
+    rgba(157,255,107,.025);
+}
+
+
+.cloud-auth-next i {
+  flex:
+    0 0 auto;
+
+  width: 6px;
+  height: 6px;
+
+  margin-top: 5px;
+
+  border-radius: 50%;
+
+  background:
+    var(--auth-green);
+
+  box-shadow:
+    0 0 8px
+    rgba(157,255,107,.45);
+}
+
+
+.cloud-auth-next b {
+  color: #b7c8cf;
+
+  font-size: 11px;
+}
+
+
+.cloud-auth-next p {
+  margin-top: 4px;
+}
+
+
+@keyframes cloudSpin {
+  to {
+    transform:
+      rotate(360deg);
+  }
+}
+
+
+@media (
+  prefers-reduced-motion:
+  reduce
+) {
+  .cloud-auth-spinner {
+    animation: none;
+  }
+}
+
+
+@media (
+  max-width: 720px
+) {
+
+  .cloud-auth-heading {
+    align-items:
+      flex-start;
+
+    flex-direction:
+      column;
+  }
+
+  .cloud-login-panel {
+    grid-template-columns:
+      1fr;
+  }
+
+  .cloud-login-symbol {
+    min-height: 150px;
+
+    border-right: 0;
+
+    border-bottom:
+      1px solid
+      rgba(0,229,255,.1);
+  }
+
+  .cloud-login-copy {
+    padding:
+      26px 20px;
+  }
+
+  .cloud-session-grid {
+    grid-template-columns:
+      1fr;
+  }
+
+  .cloud-session-top {
+    flex-direction:
+      column;
+  }
+}
+
+
+/* =================================================
+   PHASE_4C_READONLY_DATA
+   ================================================= */
+
+.cloud-readonly-grid {
+  display: grid;
+
+  grid-template-columns:
+    minmax(0, 1.45fr)
+    minmax(270px, .75fr);
+
+  gap: 10px;
+}
+
+
+.cloud-data-card {
+  min-width: 0;
+
+  border:
+    1px solid
+    rgba(0,229,255,.11);
+
+  background:
+    rgba(0,229,255,.015);
+}
+
+
+.cloud-data-card > header {
+  min-height: 63px;
+
+  padding:
+    14px 16px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  gap: 15px;
+
+  border-bottom:
+    1px solid
+    rgba(0,229,255,.08);
+}
+
+
+.cloud-data-card h3 {
+  margin:
+    4px 0 0;
+
+  color: #c7d7dd;
+
+  font:
+    600 15px
+    "Chakra Petch",
+    system-ui,
+    sans-serif;
+}
+
+
+.cloud-data-kicker {
+  color:
+    #536773;
+
+  font:
+    600 9px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .13em;
+}
+
+
+.cloud-readonly-badge {
+  padding:
+    4px 7px;
+
+  border:
+    1px solid
+    rgba(0,229,255,.13);
+
+  color:
+    #607b86;
+
+  font:
+    600 9px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .09em;
+}
+
+
+.cloud-miner-list {
+  min-height: 186px;
+
+  padding:
+    5px 15px;
+}
+
+
+.cloud-miner-row {
+  min-height: 74px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  gap: 16px;
+
+  padding:
+    13px 2px;
+
+  border-bottom:
+    1px solid
+    rgba(255,255,255,.045);
+}
+
+
+.cloud-miner-row:last-child {
+  border-bottom: 0;
+}
+
+
+.cloud-miner-main {
+  min-width: 0;
+}
+
+
+.cloud-miner-name {
+  display: block;
+
+  overflow: hidden;
+
+  color: #d4e3e8;
+
+  font:
+    600 13px
+    "JetBrains Mono",
+    monospace;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+.cloud-miner-meta {
+  margin-top: 7px;
+
+  display: flex;
+  flex-wrap: wrap;
+
+  gap:
+    4px 10px;
+}
+
+
+.cloud-miner-meta span {
+  color: #53636d;
+
+  font:
+    10px
+    "JetBrains Mono",
+    monospace;
+}
+
+
+.cloud-miner-status {
+  flex: 0 0 auto;
+
+  padding:
+    5px 8px;
+
+  border:
+    1px solid
+    rgba(120,135,145,.18);
+
+  color:
+    #82919a;
+
+  font:
+    600 9px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .06em;
+}
+
+
+.cloud-miner-status.active {
+  border-color:
+    rgba(157,255,107,.23);
+
+  color:
+    #9dff6b;
+
+  background:
+    rgba(157,255,107,.035);
+}
+
+
+.cloud-miner-status.pending {
+  border-color:
+    rgba(226,201,108,.23);
+
+  color:
+    #e2c96c;
+
+  background:
+    rgba(226,201,108,.035);
+}
+
+
+.cloud-miner-status.error {
+  border-color:
+    rgba(255,121,111,.25);
+
+  color:
+    #ff8b83;
+
+  background:
+    rgba(255,121,111,.035);
+}
+
+
+.cloud-miner-status.stopped {
+  color:
+    #74838d;
+}
+
+
+.cloud-data-empty {
+  min-height: 175px;
+
+  display: grid;
+  place-items: center;
+
+  color: #495963;
+
+  font:
+    11px
+    "JetBrains Mono",
+    monospace;
+}
+
+
+.cloud-subscription-view {
+  padding:
+    8px 16px 13px;
+}
+
+
+.cloud-sub-row {
+  min-height: 45px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  gap: 16px;
+
+  border-bottom:
+    1px solid
+    rgba(255,255,255,.045);
+}
+
+
+.cloud-sub-row:last-child {
+  border-bottom: 0;
+}
+
+
+.cloud-sub-row span {
+  color: #51616b;
+
+  font:
+    9px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .08em;
+}
+
+
+.cloud-sub-row b {
+  max-width: 60%;
+
+  overflow: hidden;
+
+  color: #aebfc6;
+
+  font:
+    600 11px
+    "JetBrains Mono",
+    monospace;
+
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+.cloud-sub-row b.active {
+  color:
+    #9dff6b;
+}
+
+
+.cloud-sub-row b.expired {
+  color:
+    #d4a178;
+}
+
+
+@media (
+  max-width: 900px
+) {
+
+  .cloud-readonly-grid {
+    grid-template-columns:
+      1fr;
+  }
+
+}
+
+
+@media (
+  max-width: 560px
+) {
+
+  .cloud-miner-row {
+    align-items:
+      flex-start;
+
+    flex-direction:
+      column;
+  }
+
+  .cloud-miner-status {
+    align-self:
+      flex-start;
+  }
+
+}
+
+
+
+/* =================================================
+   PHASE_4D1_CONNECT_CHECK
+   ================================================= */
+
+.cloud-connect-form {
+  padding:
+    16px;
+
+  border-top:
+    1px solid
+    rgba(0,229,255,.08);
+
+  background:
+    rgba(0,229,255,.012);
+}
+
+
+.cloud-connect-form > label {
+  display: block;
+
+  margin-bottom:
+    7px;
+
+  color:
+    #647681;
+
+  font:
+    600 9px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .1em;
+}
+
+
+.cloud-connect-field {
+  display: grid;
+
+  grid-template-columns:
+    minmax(0,1fr)
+    auto;
+
+  gap:
+    7px;
+}
+
+
+.cloud-connect-field input {
+  min-width: 0;
+  min-height: 42px;
+
+  padding:
+    0 12px;
+
+  border:
+    1px solid
+    rgba(0,229,255,.14);
+
+  outline:
+    none;
+
+  color:
+    #d3e6eb;
+
+  background:
+    rgba(0,0,0,.25);
+
+  font:
+    10px
+    "JetBrains Mono",
+    monospace;
+}
+
+
+.cloud-connect-field input:focus {
+  border-color:
+    rgba(0,229,255,.42);
+}
+
+
+.cloud-connect-field button {
+  min-height: 42px;
+
+  padding:
+    0 15px;
+
+  border:
+    1px solid
+    rgba(157,255,107,.23);
+
+  color:
+    #baff91;
+
+  background:
+    rgba(157,255,107,.035);
+
+  cursor: pointer;
+
+  font:
+    600 10px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .06em;
+}
+
+
+.cloud-connect-field button:disabled {
+  opacity: .45;
+
+  cursor:
+    wait;
+}
+
+
+.cloud-connect-message {
+  min-height: 16px;
+
+  margin:
+    8px 0 0;
+
+  color:
+    #53646e;
+
+  font:
+    10px
+    "JetBrains Mono",
+    monospace;
+
+  line-height:
+    1.5;
+}
+
+
+.cloud-connect-message.ok {
+  color:
+    #9dff6b;
+}
+
+
+.cloud-connect-message.error {
+  color:
+    #ff8b83;
+}
+
+
+.cloud-connect-approval {
+  margin-top:
+    13px;
+
+  padding:
+    14px;
+
+  display: grid;
+
+  grid-template-columns:
+    minmax(0,1fr)
+    128px;
+
+  gap:
+    14px;
+
+  border:
+    1px solid
+    rgba(226,201,108,.16);
+
+  background:
+    rgba(226,201,108,.025);
+}
+
+
+.cloud-connect-approval-copy b {
+  display: block;
+
+  margin-top:
+    6px;
+
+  color:
+    #d5e1e5;
+
+  font-size:
+    11px;
+}
+
+
+.cloud-connect-approval-copy p {
+  margin:
+    7px 0 0;
+
+  max-width:
+    570px;
+
+  color:
+    #697983;
+
+  font-size:
+    11px;
+
+  line-height:
+    1.55;
+}
+
+
+.cloud-connect-qr {
+  width:
+    128px;
+
+  height:
+    128px;
+
+  padding:
+    7px;
+
+  display:
+    grid;
+
+  place-items:
+    center;
+
+  overflow:
+    hidden;
+
+  background:
+    #fff;
+
+  color:
+    #111;
+
+  font-size:
+    10px;
+}
+
+
+.cloud-connect-qr svg {
+  display:
+    block;
+
+  width:
+    100%;
+
+  height:
+    100%;
+}
+
+
+.cloud-connect-actions {
+  grid-column:
+    1 / -1;
+
+  display:
+    flex;
+
+  flex-wrap:
+    wrap;
+
+  gap:
+    7px;
+}
+
+
+.cloud-connect-open,
+.cloud-connect-secondary {
+  min-height:
+    34px;
+
+  padding:
+    0 11px;
+
+  display:
+    inline-flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    center;
+
+  border:
+    1px solid
+    rgba(0,229,255,.15);
+
+  color:
+    #92dce6;
+
+  background:
+    rgba(0,229,255,.025);
+
+  text-decoration:
+    none;
+
+  cursor:
+    pointer;
+
+  font:
+    600 9px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .05em;
+}
+
+
+.cloud-connect-open {
+  border-color:
+    rgba(157,255,107,.22);
+
+  color:
+    #baff91;
+}
+
+
+.cloud-connect-secondary:disabled {
+  opacity:
+    .45;
+
+  cursor:
+    wait;
+}
+
+
+@media (
+  max-width: 640px
+) {
+
+  .cloud-connect-field {
+    grid-template-columns:
+      1fr;
+  }
+
+
+  .cloud-connect-approval {
+    grid-template-columns:
+      1fr;
+  }
+
+
+  .cloud-connect-qr {
+    width:
+      150px;
+
+    height:
+      150px;
+  }
+
+}
+
+
+
+/* =================================================
+   PHASE_4D2_MINER_CONTROLS
+   ================================================= */
+
+.cloud-control-message {
+  padding:
+    10px 13px;
+
+  border:
+    1px solid
+    rgba(0,229,255,.12);
+
+  color:
+    #84959e;
+
+  background:
+    rgba(0,229,255,.02);
+
+  font:
+    10px
+    "JetBrains Mono",
+    monospace;
+
+  line-height:
+    1.5;
+}
+
+
+.cloud-control-message.ok {
+  border-color:
+    rgba(157,255,107,.16);
+
+  color:
+    #9dff6b;
+
+  background:
+    rgba(157,255,107,.025);
+}
+
+
+.cloud-control-message.error {
+  border-color:
+    rgba(255,121,111,.2);
+
+  color:
+    #ff9189;
+
+  background:
+    rgba(255,121,111,.025);
+}
+
+
+.cloud-miner-right {
+  flex:
+    0 0 auto;
+
+  display:
+    flex;
+
+  flex-direction:
+    column;
+
+  align-items:
+    flex-end;
+
+  gap:
+    8px;
+}
+
+
+.cloud-miner-controls {
+  display:
+    flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    flex-end;
+
+  flex-wrap:
+    wrap;
+
+  gap:
+    5px;
+}
+
+
+.cloud-miner-action {
+  min-height:
+    29px;
+
+  padding:
+    0 9px;
+
+  border:
+    1px solid
+    rgba(0,229,255,.13);
+
+  color:
+    #718994;
+
+  background:
+    rgba(0,229,255,.018);
+
+  cursor:
+    pointer;
+
+  font:
+    600 9px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .045em;
+}
+
+
+.cloud-miner-action:hover {
+  border-color:
+    rgba(0,229,255,.3);
+
+  color:
+    #b6dbe1;
+}
+
+
+.cloud-miner-action.start {
+  border-color:
+    rgba(157,255,107,.22);
+
+  color:
+    #aaf77f;
+
+  background:
+    rgba(157,255,107,.025);
+}
+
+
+.cloud-miner-action.stop {
+  border-color:
+    rgba(226,201,108,.18);
+
+  color:
+    #d4c275;
+
+  background:
+    rgba(226,201,108,.02);
+}
+
+
+.cloud-miner-action.remove {
+  border-color:
+    rgba(255,121,111,.18);
+
+  color:
+    #b97874;
+
+  background:
+    rgba(255,121,111,.018);
+}
+
+
+.cloud-miner-action.remove:hover {
+  border-color:
+    rgba(255,121,111,.38);
+
+  color:
+    #ff9189;
+}
+
+
+.cloud-miner-action:disabled {
+  opacity:
+    .42;
+
+  cursor:
+    wait;
+}
+
+
+@media (
+  max-width: 560px
+) {
+
+  .cloud-miner-right {
+    width:
+      100%;
+
+    align-items:
+      flex-start;
+  }
+
+
+  .cloud-miner-controls {
+    justify-content:
+      flex-start;
+  }
+
+}
+
+
+
+/* =================================================
+   PHASE_4E_OBSERVABILITY
+   ================================================= */
+
+.cloud-observability-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.35fr)
+    minmax(300px, .65fr);
+  gap: 10px;
+}
+
+.cloud-observe-card {
+  min-width: 0;
+  border: 1px solid rgba(0,229,255,.10);
+  background: rgba(0,229,255,.012);
+}
+
+.cloud-cycle-card {
+  grid-column: 1 / -1;
+}
+
+.cloud-observe-head {
+  min-height: 66px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid rgba(0,229,255,.075);
+}
+
+.cloud-observe-head h3 {
+  margin: 4px 0 0;
+  color: #c8d9de;
+  font: 600 15px "Chakra Petch", system-ui, sans-serif;
+}
+
+.cloud-observe-head small {
+  display: block;
+  margin-top: 4px;
+  color: #50636c;
+  font: 9px "JetBrains Mono", monospace;
+  letter-spacing: .07em;
+}
+
+.cloud-cycle-status,
+.cloud-health-status {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 1px solid rgba(120,135,145,.16);
+  color: #73838c;
+  font: 600 9px "JetBrains Mono", monospace;
+  letter-spacing: .07em;
+}
+
+.cloud-cycle-status.live,
+.cloud-health-status.healthy {
+  border-color: rgba(157,255,107,.22);
+  color: #9dff6b;
+  background: rgba(157,255,107,.028);
+}
+
+.cloud-cycle-status.stale,
+.cloud-health-status.warning {
+  border-color: rgba(226,201,108,.22);
+  color: #e2c96c;
+  background: rgba(226,201,108,.028);
+}
+
+.cloud-health-status.critical {
+  border-color: rgba(255,121,111,.25);
+  color: #ff8b83;
+  background: rgba(255,121,111,.03);
+}
+
+
+/* ---------- cycle monitor ---------- */
+
+.cloud-cycle-dates {
+  padding: 17px 18px 12px;
+  display: grid;
+  grid-template-columns:
+    minmax(0,1fr)
+    auto
+    minmax(0,1fr);
+  gap: 18px;
+  align-items: center;
+}
+
+.cloud-cycle-dates > div {
+  min-width: 0;
+}
+
+.cloud-cycle-dates .end {
+  text-align: right;
+}
+
+.cloud-cycle-dates span {
+  display: block;
+  color: #53646d;
+  font: 9px "JetBrains Mono", monospace;
+  letter-spacing: .09em;
+}
+
+.cloud-cycle-dates b {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  color: #b8c9cf;
+  font: 600 10px "JetBrains Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-cycle-dates small {
+  display: block;
+  margin-top: 5px;
+  color: #42535c;
+  font: 9px "JetBrains Mono", monospace;
+}
+
+.cloud-cycle-dates small i {
+  color: #69808a;
+  font-style: normal;
+}
+
+.cloud-cycle-center {
+  min-width: 165px;
+  text-align: center;
+}
+
+.cloud-cycle-center strong {
+  display: block;
+  color: #d9edf1;
+  font: 600 24px "JetBrains Mono", monospace;
+  letter-spacing: -.04em;
+}
+
+.cloud-cycle-center span {
+  margin-top: 5px;
+  color: #60727b;
+}
+
+.cloud-cycle-progress {
+  padding: 0 18px 15px;
+  display: grid;
+  grid-template-columns:
+    28px
+    minmax(0,1fr)
+    auto
+    30px;
+  align-items: center;
+  gap: 8px;
+}
+
+.cloud-cycle-progress > div {
+  grid-column: 2;
+  height: 5px;
+  overflow: hidden;
+  border: 1px solid rgba(0,229,255,.08);
+  background: rgba(0,229,255,.035);
+}
+
+.cloud-cycle-progress > div i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: #9dff6b;
+  box-shadow: 0 0 8px rgba(157,255,107,.28);
+}
+
+.cloud-cycle-progress span,
+.cloud-cycle-progress b {
+  color: #50616a;
+  font: 9px "JetBrains Mono", monospace;
+}
+
+.cloud-cycle-progress b {
+  color: #81959e;
+  text-align: center;
+}
+
+.cloud-cycle-metrics {
+  display: grid;
+  grid-template-columns:
+    repeat(4, minmax(0,1fr));
+  border-top: 1px solid rgba(0,229,255,.07);
+}
+
+.cloud-cycle-metrics > div {
+  min-width: 0;
+  padding: 13px 15px;
+  border-right: 1px solid rgba(0,229,255,.06);
+}
+
+.cloud-cycle-metrics > div:last-child {
+  border-right: 0;
+}
+
+.cloud-cycle-metrics b {
+  display: block;
+  overflow: hidden;
+  color: #b9cdd2;
+  font: 600 12px "JetBrains Mono", monospace;
+  text-overflow: ellipsis;
+}
+
+.cloud-cycle-metrics span {
+  display: block;
+  margin-top: 5px;
+  color: #4d5f68;
+  font: 9px "JetBrains Mono", monospace;
+  letter-spacing: .07em;
+}
+
+
+/* ---------- mining health ---------- */
+
+.cloud-health-metrics {
+  padding: 13px 14px;
+  display: grid;
+  grid-template-columns:
+    repeat(6, minmax(0,1fr));
+  gap: 6px;
+}
+
+.cloud-health-metrics > div {
+  min-width: 0;
+  padding: 9px 8px;
+  border: 1px solid rgba(255,255,255,.045);
+  background: rgba(255,255,255,.012);
+}
+
+.cloud-health-metrics b {
+  display: block;
+  overflow: hidden;
+  color: #b6c6cb;
+  font: 600 14px "JetBrains Mono", monospace;
+  text-overflow: ellipsis;
+}
+
+.cloud-health-metrics span {
+  display: block;
+  margin-top: 4px;
+  color: #50616a;
+  font: 8px "JetBrains Mono", monospace;
+  letter-spacing: .07em;
+}
+
+.cloud-health-metrics .good b {
+  color: #9dff6b;
+}
+
+.cloud-health-metrics .warn b {
+  color: #dcc774;
+}
+
+.cloud-health-metrics .bad b {
+  color: #ff8b83;
+}
+
+.cloud-health-reason {
+  margin: 0 14px 13px;
+  padding: 11px 12px;
+  border: 1px solid rgba(226,201,108,.20);
+  background: rgba(226,201,108,.025);
+}
+
+.cloud-health-reason[hidden] {
+  display: none;
+}
+
+.cloud-health-reason > span,
+.cloud-health-reason > strong,
+.cloud-health-reason > small {
+  display: block;
+}
+
+.cloud-health-reason > span {
+  color: #8f8250;
+  font: 600 9px "JetBrains Mono", monospace;
+  letter-spacing: .09em;
+}
+
+.cloud-health-reason > strong {
+  margin-top: 6px;
+  color: #e2c96c;
+  font: 700 11px "JetBrains Mono", monospace;
+  letter-spacing: .045em;
+}
+
+.cloud-health-reason > small {
+  margin-top: 5px;
+  color: #8799a1;
+  font: 10px/1.55 "JetBrains Mono", monospace;
+}
+
+.cloud-health-reason.critical {
+  border-color: rgba(255,121,111,.24);
+  background: rgba(255,121,111,.025);
+}
+
+.cloud-health-reason.critical > strong {
+  color: #ff8b83;
+}
+
+.cloud-health-timeline-box {
+  padding: 0 14px 13px;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+}
+
+.cloud-health-timeline-box > span {
+  color: #4f6069;
+  font: 9px "JetBrains Mono", monospace;
+  letter-spacing: .08em;
+}
+
+.cloud-health-timeline {
+  min-height: 18px;
+  margin-top: 9px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cloud-health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #53616a;
+}
+
+.cloud-health-dot.healthy {
+  background: #9dff6b;
+  box-shadow: 0 0 7px rgba(157,255,107,.28);
+}
+
+.cloud-health-dot.recovered {
+  background: #e2c96c;
+}
+
+.cloud-health-dot.pending {
+  background: #d6a94f;
+  box-shadow: 0 0 7px rgba(214,169,79,.18);
+}
+
+.cloud-health-dot.lost {
+  background: #ff8178;
+  box-shadow: 0 0 7px rgba(255,121,111,.20);
+}
+
+.cloud-health-events {
+  display: grid;
+  gap: 5px;
+  padding: 10px 14px 14px;
+}
+
+.cloud-health-event {
+  border: 1px solid rgba(255,255,255,.045);
+  background: rgba(255,255,255,.01);
+}
+
+.cloud-health-event summary {
+  min-height: 36px;
+  padding: 8px 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.cloud-health-event summary::-webkit-details-marker {
+  display: none;
+}
+
+.cloud-health-event-state {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+.cloud-health-event-state.healthy {
+  background: #9dff6b;
+}
+
+.cloud-health-event-state.recovered {
+  background: #e2c96c;
+}
+
+.cloud-health-event-state.pending {
+  background: #d6a94f;
+}
+
+.cloud-health-event-state.lost {
+  background: #ff8178;
+}
+
+.cloud-health-event summary b {
+  color: #9aacb4;
+  font: 600 10px "JetBrains Mono", monospace;
+}
+
+.cloud-health-event summary span {
+  min-width: 0;
+  overflow: hidden;
+  color: #566872;
+  font: 9px "JetBrains Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-health-event summary strong {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font: 600 9px "JetBrains Mono", monospace;
+}
+
+.cloud-health-event summary strong.healthy {
+  color: #9dff6b;
+}
+
+.cloud-health-event summary strong.recovered {
+  color: #e2c96c;
+}
+
+.cloud-health-event summary strong.pending {
+  color: #d6a94f;
+}
+
+.cloud-health-event summary strong.lost {
+  color: #ff8178;
+}
+
+.cloud-health-detail {
+  padding: 0 9px 9px;
+  display: grid;
+  grid-template-columns:
+    repeat(3, minmax(0,1fr));
+  gap: 5px;
+}
+
+.cloud-health-detail > div {
+  min-width: 0;
+  padding: 6px;
+  background: rgba(255,255,255,.012);
+}
+
+.cloud-health-detail span {
+  display: block;
+  color: #465760;
+  font: 8px "JetBrains Mono", monospace;
+}
+
+.cloud-health-detail b {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #8da0a8;
+  font: 600 9px "JetBrains Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+/* ---------- reward feed ---------- */
+
+.cloud-reward-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.cloud-reward-feed {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 7px 14px;
+  scrollbar-width: thin;
+  scrollbar-color:
+    rgba(0,229,255,.28)
+    transparent;
+}
+
+.cloud-reward-feed::-webkit-scrollbar {
+  width: 5px;
+}
+
+.cloud-reward-feed::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cloud-reward-feed::-webkit-scrollbar-thumb {
+  background: rgba(0,229,255,.28);
+  border-radius: 999px;
+}
+
+.cloud-reward-row {
+  min-height: 31px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+}
+
+.cloud-reward-row:last-child {
+  border-bottom: 0;
+}
+
+.cloud-reward-row > b {
+  color: #9dff6b;
+  font: 600 11px "JetBrains Mono", monospace;
+}
+
+.cloud-reward-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.cloud-reward-meta span {
+  max-width: 150px;
+  overflow: hidden;
+  color: #54656e;
+  font: 9px "JetBrains Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-reward-total {
+  margin-top: auto;
+  padding: 12px 14px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid rgba(157,255,107,.08);
+}
+
+.cloud-reward-total span {
+  color: #4f6069;
+  font: 9px "JetBrains Mono", monospace;
+}
+
+.cloud-reward-total b {
+  color: #9dff6b;
+  font: 600 11px "JetBrains Mono", monospace;
+  white-space: nowrap;
+}
+
+.cloud-reward-partial {
+  margin: 0;
+  padding: 0 14px 11px;
+  color: #9a8759;
+  font: 9px "JetBrains Mono", monospace;
+  line-height: 1.45;
+}
+
+.cloud-observe-empty {
+  min-height: 55px;
+  display: grid;
+  place-items: center;
+  color: #46565f;
+  font: 9px "JetBrains Mono", monospace;
+  text-align: center;
+}
+
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 1050px) {
+
+  .cloud-observability-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-cycle-card {
+    grid-column: auto;
+  }
+
+  .cloud-health-metrics {
+    grid-template-columns:
+      repeat(3, minmax(0,1fr));
+  }
+}
+
+@media (max-width: 700px) {
+
+  .cloud-cycle-dates {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .cloud-cycle-dates .end {
+    text-align: left;
+  }
+
+  .cloud-cycle-center {
+    order: -1;
+    text-align: left;
+  }
+
+  .cloud-cycle-center strong {
+    font-size: 20px;
+  }
+
+  .cloud-cycle-metrics {
+    grid-template-columns:
+      repeat(2, minmax(0,1fr));
+  }
+
+  .cloud-health-detail {
+    grid-template-columns:
+      repeat(2, minmax(0,1fr));
+  }
+}
+
+@media (max-width: 480px) {
+
+  .cloud-health-metrics {
+    grid-template-columns:
+      repeat(2, minmax(0,1fr));
+  }
+
+  .cloud-cycle-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-cycle-metrics > div {
+    border-right: 0;
+    border-bottom:
+      1px solid
+      rgba(0,229,255,.05);
+  }
+}
+
+
+
+/* ==================================================
+   PHASE_7I_20260816
+   OBSERVABILITY READABILITY + FULL REWARD FEED
+   ================================================== */
+
+
+/* ----- observability micro text ----- */
+
+.cloud-data-kicker {
+  font-size:
+    12px !important;
+
+  line-height:
+    1.5 !important;
+
+  letter-spacing:
+    .16em !important;
+}
+
+
+.cloud-observe-head small {
+  font-size:
+    11.5px !important;
+
+  line-height:
+    1.55 !important;
+}
+
+
+.cloud-cycle-dates span {
+  font-size:
+    11px !important;
+
+  line-height:
+    1.5 !important;
+}
+
+
+.cloud-cycle-dates b {
+  font-size:
+    13px !important;
+}
+
+
+.cloud-cycle-dates small {
+  font-size:
+    11px !important;
+
+  line-height:
+    1.5 !important;
+}
+
+
+.cloud-cycle-center span,
+.cloud-cycle-progress span,
+.cloud-cycle-progress b,
+.cloud-cycle-metrics span {
+  font-size:
+    11px !important;
+
+  line-height:
+    1.5 !important;
+}
+
+
+.cloud-cycle-metrics b {
+  font-size:
+    14px !important;
+}
+
+
+.cloud-health-metrics span {
+  font-size:
+    11px !important;
+
+  line-height:
+    1.5 !important;
+}
+
+
+.cloud-health-metrics b {
+  font-size:
+    15px !important;
+}
+
+
+.cloud-health-timeline-box > span {
+  font-size:
+    11px !important;
+
+  letter-spacing:
+    .12em !important;
+}
+
+
+.cloud-health-event summary span,
+.cloud-health-event summary strong {
+  font-size:
+    11.5px !important;
+}
+
+
+.cloud-health-event summary b {
+  font-size:
+    12.5px !important;
+}
+
+
+.cloud-health-detail span {
+  font-size:
+    11px !important;
+}
+
+
+.cloud-health-detail b {
+  font-size:
+    12px !important;
+}
+
+
+/* ----- reward feed fills complete card ----- */
+
+.cloud-reward-card {
+  min-height:
+    0;
+}
+
+
+.cloud-reward-feed {
+  max-height:
+    none !important;
+
+  min-height:
+    0;
+
+  flex:
+    1 1 0;
+
+  overflow-y:
+    auto;
+
+  padding:
+    10px 18px;
+}
+
+
+.cloud-reward-row {
+  min-height:
+    40px !important;
+}
+
+
+.cloud-reward-row > b {
+  font:
+    700 13px
+    "JetBrains Mono",
+    monospace !important;
+}
+
+
+.cloud-reward-meta span {
+  max-width:
+    190px !important;
+
+  font:
+    500 11px
+    "JetBrains Mono",
+    monospace !important;
+
+  line-height:
+    1.35 !important;
+}
+
+
+.cloud-reward-total {
+  padding:
+    15px 18px !important;
+}
+
+
+.cloud-reward-total span {
+  font:
+    600 11px
+    "JetBrains Mono",
+    monospace !important;
+
+  letter-spacing:
+    .07em;
+}
+
+
+.cloud-reward-total b {
+  font:
+    700 13.5px
+    "JetBrains Mono",
+    monospace !important;
+}
+
+
+.cloud-reward-partial {
+  font:
+    500 11px
+    "JetBrains Mono",
+    monospace !important;
+
+  line-height:
+    1.5 !important;
+}
+
+
+.cloud-observe-empty {
+  min-height:
+    80px !important;
+
+  font:
+    500 11px
+    "JetBrains Mono",
+    monospace !important;
+}
+
+
+/* ----- trash button ----- */
+
+.cloud-reward-clear {
+  width:
+    38px;
+
+  height:
+    38px;
+
+  flex:
+    0 0 38px;
+
+  display:
+    grid;
+
+  place-items:
+    center;
+
+  padding:
+    0;
+
+  border:
+    1px solid
+    rgba(255,103,103,.24);
+
+  border-radius:
+    8px;
+
+  background:
+    rgba(255,103,103,.035);
+
+  color:
+    #87969e;
+
+  cursor:
+    pointer;
+
+  transition:
+    color .18s ease,
+    border-color .18s ease,
+    background .18s ease,
+    transform .18s ease;
+}
+
+
+.cloud-reward-clear svg {
+  width:
+    17px;
+
+  height:
+    17px;
+}
+
+
+.cloud-reward-clear:hover {
+  color:
+    #ff7777;
+
+  border-color:
+    rgba(255,103,103,.5);
+
+  background:
+    rgba(255,103,103,.08);
+
+  transform:
+    translateY(-1px);
+}
+
+
+.cloud-reward-clear:disabled {
+  opacity:
+    .45;
+
+  cursor:
+    wait;
+
+  transform:
+    none;
+}
+
+
+@media (max-width: 640px) {
+
+  .cloud-reward-feed {
+    max-height:
+      420px !important;
+
+    flex:
+      none;
+  }
+
+}
+
+
+
+/* ==================================================
+   PHASE_7J_STEP3_20260816
+   CLOUD MINER READABILITY
+   ================================================== */
+
+
+/*
+ * Previously muted secondary text was too dark.
+ * Keep hierarchy, but make it comfortably readable.
+ */
+
+.cloud-session-eyebrow,
+.cloud-session-top p,
+.cloud-session-grid span,
+.cloud-session-grid small,
+.cloud-miner-meta span,
+.cloud-subscription-view span,
+.cloud-subscription-view small,
+.cloud-observe-head small,
+.cloud-data-kicker {
+  color:
+    #c1cfd4 !important;
+}
+
+
+.cloud-session-eyebrow,
+.cloud-session-grid span,
+.cloud-miner-meta span,
+.cloud-subscription-view span,
+.cloud-data-kicker {
+  font-size:
+    12.5px !important;
+
+  font-weight:
+    600 !important;
+}
+
+
+.cloud-session-top p,
+.cloud-session-grid small,
+.cloud-subscription-view small,
+.cloud-observe-head small {
+  font-size:
+    12px !important;
+
+  line-height:
+    1.55 !important;
+}
+
+
+.cloud-subscription-view b {
+  color:
+    #eef5f7;
+
+  font-size:
+    14.5px !important;
+
+  font-weight:
+    700;
+}
+
+
+/* Mining Cycle */
+
+.cloud-cycle-dates span,
+.cloud-cycle-dates small,
+.cloud-cycle-center span,
+.cloud-cycle-progress span,
+.cloud-cycle-progress b,
+.cloud-cycle-metrics span {
+  color:
+    #b9c9ce !important;
+
+  font-size:
+    12px !important;
+
+  line-height:
+    1.5 !important;
+}
+
+
+.cloud-cycle-dates b,
+.cloud-cycle-metrics b {
+  color:
+    #edf4f6;
+}
+
+
+/* Mining Health */
+
+.cloud-health-metrics span,
+.cloud-health-timeline-box > span,
+.cloud-health-detail span {
+  color:
+    #b8c8cd !important;
+
+  font-size:
+    12px !important;
+
+  line-height:
+    1.5 !important;
+}
+
+
+/* Reward Feed */
+
+.cloud-reward-meta span {
+  color:
+    #b7c7cc !important;
+
+  font-size:
+    12px !important;
+
+  line-height:
+    1.45 !important;
+}
+
+
+.cloud-reward-total span {
+  color:
+    #c0cdd1 !important;
+
+  font-size:
+    12px !important;
+}
+
+
+.cloud-reward-total b {
+  font-size:
+    14.5px !important;
+}
+
+
+.cloud-reward-partial,
+.cloud-observe-empty {
+  color:
+    #afc0c5 !important;
+
+  font-size:
+    12px !important;
+}
+
+
+/*
+ * Do not neutralize meaningful state colors.
+ */
+
+.cloud-subscription-view
+.is-active,
+.cloud-subscription-view
+.active {
+  color:
+    #9dff6b !important;
+}
+
+
+.cloud-subscription-view
+.expired,
+.cloud-subscription-view
+.warning {
+  color:
+    #e3bd69 !important;
+}
+
+
+
+/* ==================================================
+   PHASE_7K_CLOUD_LOGIN_VISUAL_20260817
+   CLOUD NODE + TELEGRAM ICON
+   ================================================== */
+
+
+.cloud-login-symbol {
+  overflow:
+    hidden;
+}
+
+
+.cloud-node-visual {
+  position:
+    relative;
+
+  width:
+    230px;
+
+  height:
+    230px;
+
+  display:
+    grid;
+
+  place-items:
+    center;
+
+  isolation:
+    isolate;
+}
+
+
+/* soft field */
+.cloud-node-visual::before {
+  content:
+    "";
+
+  position:
+    absolute;
+
+  inset:
+    26px;
+
+  border-radius:
+    50%;
+
+  background:
+    radial-gradient(
+      circle,
+      rgba(157,255,107,.08),
+      rgba(0,229,255,.025) 42%,
+      transparent 70%
+    );
+
+  box-shadow:
+    inset 0 0 28px
+    rgba(0,229,255,.035);
+}
+
+
+/* outer radar frame */
+.cloud-node-visual::after {
+  content:
+    "";
+
+  position:
+    absolute;
+
+  inset:
+    37px;
+
+  border:
+    1px solid
+    rgba(0,229,255,.16);
+
+  border-radius:
+    50%;
+
+  box-shadow:
+    0 0 20px
+    rgba(0,229,255,.05);
+}
+
+
+/* axes */
+.cloud-node-axis {
+  position:
+    absolute;
+
+  z-index:
+    1;
+
+  opacity:
+    .32;
+
+  pointer-events:
+    none;
+}
+
+
+.cloud-node-axis-x {
+  width:
+    142px;
+
+  height:
+    1px;
+
+  background:
+    linear-gradient(
+      90deg,
+      transparent,
+      rgba(0,229,255,.38),
+      transparent
+    );
+}
+
+
+.cloud-node-axis-y {
+  width:
+    1px;
+
+  height:
+    142px;
+
+  background:
+    linear-gradient(
+      180deg,
+      transparent,
+      rgba(0,229,255,.38),
+      transparent
+    );
+}
+
+
+/* rotating rings */
+.cloud-node-orbit {
+  position:
+    absolute;
+
+  border:
+    1px solid
+    rgba(0,229,255,.14);
+
+  border-radius:
+    50%;
+
+  pointer-events:
+    none;
+}
+
+
+.cloud-node-orbit-a {
+  width:
+    158px;
+
+  height:
+    158px;
+
+  animation:
+    cloudNodeSpin 18s
+    linear infinite;
+}
+
+
+.cloud-node-orbit-b {
+  width:
+    118px;
+
+  height:
+    118px;
+
+  border-color:
+    rgba(157,255,107,.15);
+
+  animation:
+    cloudNodeSpinReverse 13s
+    linear infinite;
+}
+
+
+/* orbit nodes */
+.cloud-node-orbit i {
+  position:
+    absolute;
+
+  width:
+    7px;
+
+  height:
+    7px;
+
+  border-radius:
+    50%;
+
+  background:
+    var(--auth-green);
+
+  box-shadow:
+    0 0 10px
+    rgba(157,255,107,.45);
+}
+
+
+.cloud-node-orbit-a i:nth-child(1) {
+  top:
+    10px;
+
+  left:
+    105px;
+}
+
+
+.cloud-node-orbit-a i:nth-child(2) {
+  right:
+    3px;
+
+  top:
+    83px;
+
+  background:
+    var(--auth-cyan);
+
+  box-shadow:
+    0 0 10px
+    rgba(0,229,255,.45);
+}
+
+
+.cloud-node-orbit-a i:nth-child(3) {
+  bottom:
+    13px;
+
+  left:
+    28px;
+}
+
+
+.cloud-node-orbit-b i:nth-child(1) {
+  top:
+    16px;
+
+  left:
+    15px;
+
+  width:
+    5px;
+
+  height:
+    5px;
+
+  background:
+    var(--auth-cyan);
+}
+
+
+.cloud-node-orbit-b i:nth-child(2) {
+  right:
+    9px;
+
+  bottom:
+    25px;
+
+  width:
+    5px;
+
+  height:
+    5px;
+}
+
+
+/* center */
+.cloud-node-core {
+  position:
+    relative;
+
+  z-index:
+    4;
+
+  width:
+    78px;
+
+  height:
+    78px;
+
+  display:
+    grid;
+
+  place-items:
+    center;
+
+  border:
+    1px solid
+    rgba(0,229,255,.30);
+
+  border-radius:
+    15px;
+
+  background:
+    rgba(3,11,15,.94);
+
+  box-shadow:
+    0 0 24px
+    rgba(0,229,255,.08),
+    0 0 34px
+    rgba(157,255,107,.06);
+}
+
+
+.cloud-node-core img {
+  position:
+    relative;
+
+  z-index:
+    2;
+
+  width:
+    57px;
+
+  height:
+    57px;
+
+  object-fit:
+    contain;
+
+  border-radius:
+    10px;
+}
+
+
+.cloud-node-core-ring {
+  position:
+    absolute;
+
+  inset:
+    -12px;
+
+  border:
+    1px solid
+    rgba(157,255,107,.14);
+
+  border-radius:
+    20px;
+
+  animation:
+    cloudNodePulse 2.6s
+    ease-in-out infinite;
+}
+
+
+/* caption */
+.cloud-node-caption {
+  position:
+    absolute;
+
+  left:
+    50%;
+
+  bottom:
+    1px;
+
+  z-index:
+    5;
+
+  width:
+    210px;
+
+  transform:
+    translateX(-50%);
+
+  display:
+    flex;
+
+  flex-direction:
+    column;
+
+  align-items:
+    center;
+
+  gap:
+    3px;
+
+  text-align:
+    center;
+
+  font-family:
+    "JetBrains Mono",
+    monospace;
+}
+
+
+.cloud-node-caption b {
+  color:
+    var(--auth-cyan);
+
+  font-size:
+    10.5px;
+
+  font-weight:
+    700;
+
+  letter-spacing:
+    .16em;
+}
+
+
+.cloud-node-caption span {
+  color:
+    #778992;
+
+  font-size:
+    8.5px;
+
+  letter-spacing:
+    .08em;
+}
+
+
+.cloud-node-caption small {
+  color:
+    var(--auth-green);
+
+  font-size:
+    8.5px;
+
+  font-weight:
+    700;
+
+  letter-spacing:
+    .14em;
+}
+
+
+/* Telegram button layout */
+.cloud-telegram-button-label {
+  display:
+    inline-flex;
+
+  align-items:
+    center;
+
+  gap:
+    10px;
+}
+
+
+.cloud-telegram-icon {
+  width:
+    19px;
+
+  height:
+    19px;
+
+  flex:
+    0 0 auto;
+
+  overflow:
+    visible;
+
+  fill:
+    none;
+
+  stroke:
+    var(--auth-cyan);
+
+  stroke-width:
+    1.7;
+
+  stroke-linecap:
+    round;
+
+  stroke-linejoin:
+    round;
+
+  filter:
+    drop-shadow(
+      0 0 5px
+      rgba(0,229,255,.18)
+    );
+
+  transition:
+    transform .16s ease,
+    filter .16s ease;
+}
+
+
+.cloud-telegram-button:hover
+.cloud-telegram-icon {
+  transform:
+    translate(
+      2px,
+      -1px
+    );
+
+  filter:
+    drop-shadow(
+      0 0 8px
+      rgba(0,229,255,.34)
+    );
+}
+
+
+@keyframes cloudNodeSpin {
+
+  to {
+    transform:
+      rotate(360deg);
+  }
+
+}
+
+
+@keyframes cloudNodeSpinReverse {
+
+  to {
+    transform:
+      rotate(-360deg);
+  }
+
+}
+
+
+@keyframes cloudNodePulse {
+
+  0%,
+  100% {
+    opacity:
+      .35;
+
+    transform:
+      scale(.97);
+  }
+
+  50% {
+    opacity:
+      .8;
+
+    transform:
+      scale(1.03);
+  }
+
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+
+  .cloud-node-orbit-a,
+  .cloud-node-orbit-b,
+  .cloud-node-core-ring {
+    animation:
+      none !important;
+  }
+
+}
+
+
+@media (max-width: 700px) {
+
+  .cloud-node-visual {
+    width:
+      205px;
+
+    height:
+      205px;
+
+    margin:
+      12px auto;
+  }
+
+
+  .cloud-node-caption {
+    bottom:
+      -2px;
+  }
+
+}
+
+
+
+/* ==================================================
+   PHASE_7K_CLOUD_LOGIN_CENTER_V3_20260817
+   LARGE CLOUD MINER + TRUE 50/50 ALIGNMENT
+   ================================================== */
+
+
+/*
+ * Old panel max-width was 860px.
+ * Use nearly all available auth-card width.
+ */
+.cloud-auth-card
+.cloud-login-panel {
+  width:
+    calc(100% - 40px) !important;
+
+  max-width:
+    1140px !important;
+
+  min-height:
+    500px !important;
+
+  margin:
+    auto !important;
+
+  grid-template-columns:
+    minmax(0, 1fr)
+    minmax(0, 1fr) !important;
+
+  align-items:
+    center !important;
+}
+
+
+/*
+ * True left half.
+ */
+.cloud-auth-card
+.cloud-login-symbol {
+  min-width:
+    0 !important;
+
+  min-height:
+    430px !important;
+
+  padding:
+    0 !important;
+
+  display:
+    flex !important;
+
+  align-items:
+    center !important;
+
+  justify-content:
+    center !important;
+
+  overflow:
+    visible !important;
+}
+
+
+/*
+ * Base visual = 230px.
+ * 1.60 scale = approximately 368px visible.
+ */
+.cloud-auth-card
+.cloud-login-symbol
+.cloud-node-visual {
+  margin:
+    0 auto !important;
+
+  transform:
+    scale(1.60) !important;
+
+  transform-origin:
+    center center !important;
+}
+
+
+/*
+ * True right half.
+ */
+.cloud-auth-card
+.cloud-login-copy {
+  min-width:
+    0 !important;
+
+  padding:
+    44px 52px !important;
+
+  align-self:
+    center !important;
+}
+
+
+.cloud-auth-card
+.cloud-login-copy h2 {
+  font-size:
+    30px !important;
+}
+
+
+.cloud-auth-card
+.cloud-login-copy > p {
+  max-width:
+    560px !important;
+
+  font-size:
+    13px !important;
+
+  line-height:
+    1.68 !important;
+}
+
+
+.cloud-auth-card
+.cloud-telegram-button {
+  min-height:
+    58px !important;
+
+  margin-top:
+    26px !important;
+
+  padding:
+    0 22px !important;
+}
+
+
+.cloud-auth-card
+.cloud-telegram-icon {
+  width:
+    22px !important;
+
+  height:
+    22px !important;
+}
+
+
+/*
+ * Medium screens.
+ */
+@media (max-width: 1050px) {
+
+  .cloud-auth-card
+  .cloud-login-panel {
+    width:
+      calc(100% - 28px) !important;
+  }
+
+
+  .cloud-auth-card
+  .cloud-login-symbol
+  .cloud-node-visual {
+    transform:
+      scale(1.35) !important;
+  }
+
+
+  .cloud-auth-card
+  .cloud-login-copy {
+    padding:
+      36px 30px !important;
+  }
+
+}
+
+
+/*
+ * Mobile stacks vertically.
+ */
+@media (max-width: 700px) {
+
+  .cloud-auth-card
+  .cloud-login-panel {
+    width:
+      100% !important;
+
+    min-height:
+      auto !important;
+
+    grid-template-columns:
+      1fr !important;
+  }
+
+
+  .cloud-auth-card
+  .cloud-login-symbol {
+    min-height:
+      325px !important;
+
+    overflow:
+      hidden !important;
+
+    border-right:
+      0 !important;
+
+    border-bottom:
+      1px solid
+      rgba(0,229,255,.1);
+  }
+
+
+  .cloud-auth-card
+  .cloud-login-symbol
+  .cloud-node-visual {
+    transform:
+      scale(1.22) !important;
+  }
+
+
+  .cloud-auth-card
+  .cloud-login-copy {
+    padding:
+      32px 22px !important;
+  }
+
+}
+
+
+/* Premium miner card overrides must remain after the legacy phase rules. */
+.cloud-auth-view .cloud-miner-list {
+  padding: 10px 14px 14px;
+}
+
+.cloud-auth-view .cloud-miner-row {
+  min-height: 172px;
+  align-items: stretch;
+  gap: 22px;
+  padding: 20px;
+}
+
+.cloud-auth-view .cloud-miner-name {
+  color: #edf9fb;
+  font: 800 16px "JetBrains Mono", monospace;
+  letter-spacing: .02em;
+}
+
+.cloud-auth-view .cloud-miner-meta {
+  margin-top: 11px;
+  gap: 6px 18px;
+}
+
+.cloud-auth-view .cloud-miner-meta span {
+  color: #cde0e4 !important;
+  font-size: 13px !important;
+  line-height: 1.45;
+}
+
+.cloud-auth-view .cloud-miner-status {
+  padding: 7px 11px;
+  font: 800 10px "JetBrains Mono", monospace;
+}
+
+@media (max-width: 700px) {
+  .cloud-auth-view .cloud-miner-row {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 17px;
+  }
+
+  .cloud-auth-view .cloud-miner-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-auth-view .cloud-miner-epoch-metric {
+    min-height: 78px;
+  }
+
+  .cloud-auth-view .cloud-miner-right {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 0;
+  }
+}
+
+
+/* Final cascade lock for the Premium Cloud Console. */
+.cloud-auth-view .cloud-auth-shell {
+  width: 100%;
+  max-width: 1380px;
+  gap: 18px;
+}
+
+.cloud-auth-view .cloud-auth-heading {
+  min-height: 136px;
+  padding: 26px 30px;
+  border-color: var(--premium-line);
+  border-radius: 12px;
+  background:
+    linear-gradient(110deg, rgba(0, 229, 255, .09), rgba(7, 18, 25, .92) 42%, rgba(4, 10, 15, .98)),
+    var(--premium-panel);
+  box-shadow: var(--premium-glow), inset 0 1px 0 rgba(255, 255, 255, .035);
+}
+
+.cloud-auth-view .cloud-auth-heading h1 {
+  margin: 8px 0 5px;
+  color: #f0fbfd;
+  font-size: clamp(31px, 3vw, 43px);
+}
+
+.cloud-auth-view .cloud-auth-heading p {
+  color: #9aadb4;
+  font-size: 13px;
+}
+
+.cloud-auth-view .cloud-auth-card {
+  min-height: 430px;
+  border: 0;
+  background: transparent;
+}
+
+.cloud-auth-view .cloud-session-panel {
+  min-height: 0;
+  justify-content: flex-start;
+  gap: 18px;
+  padding: 0;
+}
+
+.cloud-auth-view .cloud-session-top {
+  min-height: 164px;
+  align-items: center;
+  padding: 28px 30px;
+  border: 1px solid var(--premium-line);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 86% 20%, rgba(157, 255, 107, .065), transparent 24%),
+    linear-gradient(120deg, rgba(0, 229, 255, .055), rgba(5, 16, 23, .96) 50%, rgba(3, 11, 16, .98));
+  box-shadow: var(--premium-glow), inset 0 1px 0 rgba(255, 255, 255, .03);
+}
+
+.cloud-auth-view .cloud-session-top h2 {
+  margin: 9px 0 7px;
+  color: #f2fbfc;
+  font-size: clamp(27px, 3vw, 38px);
+}
+
+.cloud-auth-view .cloud-session-grid {
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.cloud-auth-view .cloud-session-grid article {
+  min-height: 144px;
+  padding: 22px 24px;
+  border-color: var(--premium-line);
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(0, 229, 255, .065), transparent 38%),
+    linear-gradient(145deg, rgba(7, 22, 29, .92), rgba(3, 11, 16, .98));
+}
+
+.cloud-auth-view .cloud-session-grid span {
+  color: #9db2b8 !important;
+  font-size: 11px !important;
+}
+
+.cloud-auth-view .cloud-session-grid b {
+  margin-top: 13px;
+  color: #9dff6b;
+  font-size: clamp(25px, 2.4vw, 34px);
+}
+
+.cloud-auth-view .cloud-session-grid small {
+  color: #789098 !important;
+  font-size: 10px !important;
+}
+
+.cloud-auth-view .cloud-readonly-grid {
+  grid-template-columns: minmax(0, 1.65fr) minmax(300px, .70fr);
+  gap: 16px;
+}
+
+.cloud-auth-view .cloud-observability-grid {
+  grid-template-columns: minmax(0, 1.2fr) minmax(360px, .8fr);
+  gap: 16px;
+}
+
+.cloud-auth-view .cloud-data-card,
+.cloud-auth-view .cloud-observe-card {
+  border-color: var(--premium-line);
+  border-radius: 10px;
+  background: linear-gradient(145deg, rgba(7, 21, 28, .82), rgba(3, 11, 16, .96));
+  box-shadow: var(--premium-glow), inset 0 1px 0 rgba(255, 255, 255, .025);
+}
+
+.cloud-auth-view .cloud-data-card > header,
+.cloud-auth-view .cloud-observe-head {
+  min-height: 82px;
+  padding: 18px 20px;
+  border-bottom-color: rgba(0, 229, 255, .10);
+  background: rgba(0, 229, 255, .018);
+}
+
+.cloud-auth-view .cloud-data-card h3,
+.cloud-auth-view .cloud-observe-head h3 {
+  margin-top: 6px;
+  color: #e5f2f4;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.cloud-auth-view .cloud-connect-form {
+  padding: 22px 20px 20px;
+  border-top-color: rgba(0, 229, 255, .11);
+  background: linear-gradient(135deg, rgba(0, 229, 255, .032), transparent), rgba(0, 7, 11, .42);
+}
+
+.cloud-auth-view .cloud-connect-field {
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.cloud-auth-view .cloud-connect-field input,
+.cloud-auth-view .cloud-connect-field button {
+  min-height: 50px;
+  border-radius: 6px;
+}
+
+.cloud-auth-view .cloud-connect-field input {
+  border-color: rgba(0, 229, 255, .16);
+  color: #eaf8fa;
+  background: rgba(0, 7, 11, .64);
+  font-size: 13px;
+}
+
+.cloud-auth-view .cloud-connect-field button {
+  border-color: rgba(157, 255, 107, .30);
+  color: #cfffba;
+  background: linear-gradient(135deg, rgba(157, 255, 107, .12), rgba(157, 255, 107, .035));
+}
+
+.cloud-auth-view .cloud-subscription-view {
+  display: grid;
+  gap: 9px;
+  padding: 16px;
+}
+
+.cloud-auth-view .cloud-sub-row {
+  min-height: 59px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, .055);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .014);
+}
+
+.cloud-auth-view .cloud-cycle-dates {
+  padding: 24px 24px 18px;
+  gap: 24px;
+}
+
+.cloud-auth-view .cloud-cycle-dates > div:not(.cloud-cycle-center) {
+  padding: 13px 14px;
+  border: 1px solid rgba(255, 255, 255, .045);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, .16);
+}
+
+.cloud-auth-view .cloud-cycle-center strong {
+  color: #f0fbfc;
+  font-size: clamp(28px, 3vw, 42px);
+  font-weight: 800;
+}
+
+.cloud-auth-view .cloud-cycle-progress {
+  padding: 0 24px 22px;
+  gap: 12px;
+}
+
+.cloud-auth-view .cloud-cycle-progress > div {
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .32);
+}
+
+.cloud-auth-view .cloud-cycle-progress > div i {
+  border-radius: inherit;
+  background: linear-gradient(90deg, #00bcd4, #00e5ff, #9dff6b);
+}
+
+.cloud-auth-view .cloud-cycle-metrics {
+  gap: 8px;
+  padding: 14px;
+}
+
+.cloud-auth-view .cloud-cycle-metrics > div {
+  min-height: 76px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, .05);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .012);
+}
+
+.cloud-auth-view .cloud-health-metrics {
+  gap: 9px;
+  padding: 16px;
+}
+
+.cloud-auth-view .cloud-health-metrics > div {
+  min-height: 78px;
+  padding: 12px;
+  border-radius: 6px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, .025), rgba(0, 0, 0, .08));
+}
+
+.cloud-auth-view .cloud-health-metrics b {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.cloud-auth-view .cloud-reward-feed {
+  max-height: 360px;
+  padding: 10px 16px;
+}
+
+.cloud-auth-view .cloud-reward-row {
+  min-height: 48px;
+  padding: 0 5px;
+}
+
+.cloud-auth-view .cloud-reward-total {
+  min-height: 68px;
+  padding: 15px 18px;
+  background: linear-gradient(90deg, rgba(157, 255, 107, .045), transparent);
+}
+
+.cloud-auth-view .cloud-auth-next {
+  align-items: center;
+  gap: 14px;
+  padding: 19px 20px;
+  border-radius: 9px;
+  background: linear-gradient(90deg, rgba(157, 255, 107, .07), rgba(0, 229, 255, .025)), rgba(4, 14, 18, .82);
+  box-shadow: var(--premium-glow);
+}
+
+.cloud-auth-view .cloud-login-panel {
+  min-height: 520px;
+  max-width: 980px;
+  border: 1px solid var(--premium-line);
+  border-radius: 12px;
+  background: radial-gradient(circle at 20% 50%, rgba(0, 229, 255, .07), transparent 32%), linear-gradient(135deg, rgba(7, 22, 29, .94), rgba(3, 11, 16, .98));
+  box-shadow: var(--premium-glow);
+}
+
+.cloud-auth-view .cloud-login-symbol {
+  min-height: 400px;
+  background: rgba(0, 229, 255, .018);
+}
+
+.cloud-auth-view .cloud-login-copy {
+  padding: 48px;
+}
+
+@media (max-width: 1100px) {
+  .cloud-auth-view .cloud-readonly-grid,
+  .cloud-auth-view .cloud-observability-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-auth-view .cloud-cycle-card {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 760px) {
+  .cloud-auth-view .cloud-auth-heading,
+  .cloud-auth-view .cloud-session-top {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 22px;
+  }
+
+  .cloud-auth-view .cloud-session-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-auth-view .cloud-cycle-dates {
+    grid-template-columns: 1fr;
+  }
+
+  .cloud-auth-view .cloud-cycle-dates .end,
+  .cloud-auth-view .cloud-cycle-center {
+    text-align: left;
+  }
+
+  .cloud-auth-view .cloud-cycle-metrics,
+  .cloud-auth-view .cloud-health-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cloud-auth-view .cloud-login-panel {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .cloud-auth-view .cloud-session-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cloud-auth-view .cloud-cycle-metrics,
+  .cloud-auth-view .cloud-health-metrics {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* Arc trial row in the subscription card. Hidden entirely while the rail is
+   off, so the card is unchanged when we are not running the promo. */
+.cloud-sub-arc-link {
+  color: #00d8ee;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(0, 216, 238, 0.3);
+}
+
+.cloud-sub-arc-link:hover {
+  border-bottom-color: #00d8ee;
+}

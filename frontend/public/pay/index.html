@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Arc &middot; Acki Nacki Radar</title>
+<!--
+  Served as a static file under the site CSP:
+    script-src 'self' 'unsafe-inline' https://telegram.org
+    connect-src 'self'
+    font-src 'self' data:
+
+  So: no CDN, no external fetch, no WalletConnect relay, no Google Fonts. Every
+  need comes from our own origin or /api/arc/*, and the chain calls go through
+  the injected wallet — those are handled by the extension, not by page
+  network traffic, so connect-src does not apply to them. That is what makes
+  this work without touching the security header.
+
+  This file MUST stay a real, standalone URL, even though it is also rendered
+  inside the dashboard flow (arc-trial.ts links here). The bot sends this exact
+  URL straight into Telegram chat, reaching people who have never opened the
+  dashboard and have no SPA loaded — there has to be a page at this address
+  that works with nothing but a browser and a wallet.
+
+  Language: this page has no picker of its own. It reads the SAME
+  localStorage key the dashboard's language switch writes (`radar_lang`), so a
+  visitor who set the site to English upstream sees this page in English too,
+  automatically, with zero UI added. A visitor arriving cold from Telegram
+  (nothing stored) falls back to Turkish.
+
+  A WalletConnect/Reown path (for wallets other than MetaMask) needs script-src
+  and connect-src widened first. Deliberately not done here.
+-->
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #05080d;
+    --panel: #0a1019;
+    --line: rgba(0, 229, 255, .16);
+    --text: #e9f3f6;
+    --muted: #71808b;
+    --cyan: #00e5ff;
+    --gold: #e8d77f;
+    --lime: #9dff6b;
+    --err: #ff8b83;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+  }
+  body {
+    padding: 20px 16px 48px;
+    color: var(--text);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    justify-content: center;
+  }
+  .wrap { width: 100%; max-width: 460px; }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 22px;
+    text-decoration: none;
+  }
+  .brand img { width: 22px; height: 22px; border-radius: 4px; display: block; }
+  .brand span {
+    color: var(--muted);
+    font: 700 11px "JetBrains Mono", monospace;
+    letter-spacing: .08em;
+  }
+  .brand:hover span { color: #9edce5; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 14px;
+    padding: 5px 10px;
+    border: 1px solid rgba(232, 215, 127, .32);
+    background: linear-gradient(135deg, rgba(232, 215, 127, .12), rgba(232, 215, 127, .02));
+    color: var(--gold);
+    font: 800 9px "JetBrains Mono", monospace;
+    letter-spacing: .13em;
+  }
+  .badge i {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--gold);
+    box-shadow: 0 0 8px rgba(232, 215, 127, .8);
+    animation: pulse 2.2s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { opacity: .5; box-shadow: 0 0 3px rgba(232,215,127,.35); } }
+  @media (prefers-reduced-motion: reduce) { .badge i { animation: none; } }
+
+  h1 { font-size: 21px; margin: 0 0 4px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+
+  .panel {
+    position: relative;
+    overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 18px;
+    margin-bottom: 14px;
+  }
+  .panel .corner {
+    position: absolute; width: 16px; height: 16px; pointer-events: none;
+  }
+  .panel .corner.tl { top: -1px; left: -1px; border-top: 1px solid rgba(0,229,255,.5); border-left: 1px solid rgba(0,229,255,.5); }
+  .panel .corner.tr { top: -1px; right: -1px; border-top: 1px solid rgba(0,229,255,.5); border-right: 1px solid rgba(0,229,255,.5); }
+
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; }
+  .row + .row { border-top: 1px solid var(--line); }
+  .row .k { color: var(--muted); font: 700 9px "JetBrains Mono", monospace; letter-spacing: .08em; text-transform: uppercase; }
+  .row .v { font-weight: 600; text-align: right; word-break: break-all; }
+  .row .v.mono { font: 700 13px "JetBrains Mono", monospace; letter-spacing: .08em; color: var(--cyan); }
+
+  .amount { font-size: 30px; font-weight: 700; letter-spacing: -.5px; }
+  .amount .unit { font-size: 15px; color: var(--muted); font-weight: 600; }
+
+  .banner {
+    border: 1px solid;
+    padding: 12px 14px;
+    font-size: 13px;
+    margin-bottom: 14px;
+  }
+  .banner.test { background: rgba(232,215,127,.08); border-color: rgba(232,215,127,.4); color: #ecd88f; }
+  .banner.err  { background: rgba(255,139,131,.08); border-color: rgba(255,139,131,.4); color: var(--err); }
+  .banner.ok   { background: rgba(157,255,107,.08); border-color: rgba(157,255,107,.4); color: var(--lime); }
+
+  button, a.btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    width: 100%;
+    padding: 13px 14px;
+    font: 700 12px "JetBrains Mono", monospace;
+    letter-spacing: .08em;
+    text-decoration: none;
+    cursor: pointer;
+    border: 1px solid rgba(0,229,255,.32);
+    background: linear-gradient(180deg, rgba(0,229,255,.14), rgba(0,229,255,.03));
+    color: #eafcff;
+    transition: border-color .15s, background .15s;
+  }
+  button:hover, a.btn:hover { border-color: rgba(0,229,255,.6); background: linear-gradient(180deg, rgba(0,229,255,.2), rgba(0,229,255,.05)); }
+  button[disabled] { opacity: .45; cursor: not-allowed; }
+  button.ghost, a.btn.ghost { background: transparent; border-color: var(--line); color: var(--text); }
+
+  .wallet-icon { width: 16px; height: 16px; flex: 0 0 auto; }
+
+  .steps { color: var(--muted); font-size: 12px; padding-left: 18px; margin: 12px 0 0; line-height: 1.6; }
+  .foot { color: #4d5b64; font-size: 11px; margin-top: 18px; line-height: 1.6; }
+  .foot a { color: #6a7a84; }
+
+  .hide { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="brand" href="https://ackinackiradar.com">
+    <img src="/logo.png" alt="" />
+    <span id="t-brand">ACKI NACKI RADAR</span>
+  </a>
+
+  <div class="badge"><i></i><span id="t-badgeTxt">ARC TESTNET</span></div>
+  <h1 id="t-title">Arc &ouml;demesi</h1>
+  <div class="sub" id="t-sub">Cloud Miner aboneliğine hediye g&uuml;n</div>
+
+  <div id="banner" class="banner test"><strong id="t-warnStrong">Bu bir test a&#287;&#305; &#246;demesidir.</strong> <span id="t-warnRest">Kullanaca&#287;&#305;n USDC, Circle faucet&rsquo;inden &uuml;cretsiz al&#305;n&#305;r ve ger&ccedil;ek para de&#287;ildir.</span></div>
+
+  <div id="loading" class="panel"><span id="t-loading">Fatura y&uuml;kleniyor&hellip;</span></div>
+
+  <div id="invoice" class="panel hide">
+    <i class="corner tl"></i><i class="corner tr"></i>
+    <div class="amount"><span id="amount">&mdash;</span> <span class="unit" id="t-unit">test USDC</span></div>
+    <div class="row"><span class="k" id="t-kCode">Fatura kodu</span><span class="v mono" id="code">&mdash;</span></div>
+    <div class="row"><span class="k" id="t-kNetwork">A&#287;</span><span class="v" id="chain">&mdash;</span></div>
+    <div class="row"><span class="k" id="t-kExpiry">Ge&ccedil;erlilik</span><span class="v" id="expiry">&mdash;</span></div>
+  </div>
+
+  <div id="actions" class="hide">
+    <button id="payBtn">
+      <svg class="wallet-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+        <rect x="2.5" y="6" width="19" height="13" rx="2"/>
+        <path d="M2.5 10h19"/>
+        <circle cx="17.5" cy="14.5" r="1.1" fill="currentColor" stroke="none"/>
+      </svg>
+      <span id="t-payBtn">C&uuml;zdan&#305; ba&#287;la ve &#246;de</span>
+    </button>
+    <ol class="steps" id="t-steps">
+      <li>C&uuml;zdan Arc Testnet a&#287;&#305;na ge&ccedil;irilir (gerekirse otomatik eklenir)</li>
+      <li>&Ouml;demeyi c&uuml;zdan&#305;nda onaylars&#305;n</li>
+      <li>Zincirde g&ouml;r&uuml;nd&uuml;&#287;&uuml; an aboneli&#287;in a&ccedil;&#305;l&#305;r &mdash; sayfay&#305; kapatabilirsin</li>
+    </ol>
+  </div>
+
+  <div id="noWallet" class="panel hide">
+    <i class="corner tl"></i><i class="corner tr"></i>
+    <p style="margin-top:0" id="t-noWallet">Bu taray&#305;c&#305;da c&uuml;zdan bulunamad&#305;.</p>
+    <button class="ghost" id="mmBtn">
+      <svg class="wallet-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+        <rect x="2.5" y="6" width="19" height="13" rx="2"/>
+        <path d="M2.5 10h19"/>
+        <circle cx="17.5" cy="14.5" r="1.1" fill="currentColor" stroke="none"/>
+      </svg>
+      <span id="t-mmBtn">MetaMask uygulamas&#305;nda a&ccedil;</span>
+    </button>
+    <p class="foot" id="t-faucetNote">Test USDC&rsquo;n yoksa &ouml;nce <a id="faucet" href="https://faucet.circle.com" target="_blank" rel="noopener">Circle faucet</a>&rsquo;inden al.</p>
+  </div>
+
+  <div id="result" class="panel hide"><i class="corner tl"></i><i class="corner tr"></i></div>
+
+  <p class="foot"><a href="https://ackinackiradar.com/arc" id="t-back">&larr; Acki Nacki Radar &middot; Arc</a></p>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // pay(address,bytes32) — from `cast sig`, not written by hand.
+  var PAY_SELECTOR = "0x46f8f304";
+
+  var LANG_KEY = "radar_lang";
+
+  var STR = {
+    tr: {
+      brand: "ACKI NACKI RADAR",
+      badge: "ARC TESTNET",
+      title: "Arc ödemesi",
+      sub: "Cloud Miner aboneliğine hediye gün",
+      warnStrong: "Bu bir test ağı ödemesidir.",
+      warnRest: "Kullanacağın USDC, Circle faucet’inden ücretsiz alınır ve gerçek para değildir.",
+      loading: "Fatura yükleniyor…",
+      unit: "test USDC",
+      kCode: "Fatura kodu",
+      kNetwork: "Ağ",
+      kExpiry: "Geçerlilik",
+      payBtn: "Cüzdanı bağla ve öde",
+      payBtnWait: "Cüzdan bekleniyor…",
+      payBtnConfirm: "Onay bekleniyor…",
+      payBtnRetry: "Tekrar dene",
+      steps: ["Cüzdan Arc Testnet ağına geçirilir (gerekirse otomatik eklenir)", "Ödemeyi cüzdanında onaylarsın", "Zincirde göründüğü an aboneliğin açılır — sayfayı kapatabilirsin"],
+      noWallet: "Bu tarayıcıda cüzdan bulunamadı.",
+      mmBtn: "MetaMask uygulamasında aç",
+      faucetPre: "Test USDC’n yoksa önce ",
+      faucetLink: "Circle faucet",
+      faucetPost: "’inden al.",
+      back: "← Acki Nacki Radar · Arc",
+      invalidLink: "Geçersiz bağlantı. Ödeme bağlantısını Telegram’daki mesajdan tekrar aç.",
+      disabled: "Arc ödemesi şu anda kapalı.",
+      notFound: "Bu fatura bulunamadı. Süresi dolmuş ya da zaten ödenmiş olabilir.",
+      readFail: "Fatura okunamadı.",
+      expired: "Bu faturanın süresi dolmuş. Panelden yeni bir deneme başlat.",
+      loadFail: "Sunucuya ulaşılamadı. Bağlantını kontrol edip tekrar dene.",
+      sent: "Ödeme gönderildi. Zincirde onaylandığı an aboneliğin açılacak — Telegram’dan bildirim gelecek.",
+      done: "Ödeme tamamlandı.",
+      doneRest: " Aboneliğine {days} gün eklendi.",
+      status: "Durum",
+      confirmed: "onaylandı",
+      tx: "İşlem",
+      cancelled: "Ödemeyi iptal ettin.",
+      insufficient: "Bakiyen yetersiz. Circle faucet’inden test USDC al ve tekrar dene.",
+      sendFail: "Ödeme gönderilemedi: ",
+      unknown: "bilinmeyen hata",
+    },
+    en: {
+      brand: "ACKI NACKI RADAR",
+      badge: "ARC TESTNET",
+      title: "Arc payment",
+      sub: "Free days for your Cloud Miner subscription",
+      warnStrong: "This is a test network payment.",
+      warnRest: "The USDC you use comes free from the Circle faucet and is not real money.",
+      loading: "Loading invoice…",
+      unit: "test USDC",
+      kCode: "Invoice code",
+      kNetwork: "Network",
+      kExpiry: "Time left",
+      payBtn: "Connect wallet and pay",
+      payBtnWait: "Waiting for wallet…",
+      payBtnConfirm: "Awaiting confirmation…",
+      payBtnRetry: "Try again",
+      steps: ["Your wallet switches to Arc Testnet (added automatically if needed)", "You approve the payment in your wallet", "The moment it appears on chain, your subscription opens — you can close this page"],
+      noWallet: "No wallet found in this browser.",
+      mmBtn: "Open in MetaMask app",
+      faucetPre: "No test USDC yet? Get some from the ",
+      faucetLink: "Circle faucet",
+      faucetPost: " first.",
+      back: "← Acki Nacki Radar · Arc",
+      invalidLink: "Invalid link. Reopen the payment link from your Telegram message.",
+      disabled: "Arc payments are currently off.",
+      notFound: "This invoice was not found. It may have expired or already been paid.",
+      readFail: "Could not read the invoice.",
+      expired: "This invoice has expired. Start a new trial from the dashboard.",
+      loadFail: "Could not reach the server. Check your connection and try again.",
+      sent: "Payment sent. Your subscription opens the moment it is confirmed on chain — you will get a Telegram notification.",
+      done: "Payment complete.",
+      doneRest: " {days} days were added to your subscription.",
+      status: "Status",
+      confirmed: "confirmed",
+      tx: "Transaction",
+      cancelled: "You cancelled the payment.",
+      insufficient: "Insufficient balance. Get test USDC from the Circle faucet and try again.",
+      sendFail: "Payment failed to send: ",
+      unknown: "unknown error",
+    },
+    ru: {
+      brand: "ACKI NACKI RADAR",
+      badge: "ARC TESTNET",
+      title: "Оплата Arc",
+      sub: "Бесплатные дни для подписки Cloud Miner",
+      warnStrong: "Это платёж в тестовой сети.",
+      warnRest: "Используемые USDC выдаёт бесплатный кран Circle — это не настоящие деньги.",
+      loading: "Загрузка счёта…",
+      unit: "тестовые USDC",
+      kCode: "Код счёта",
+      kNetwork: "Сеть",
+      kExpiry: "Осталось",
+      payBtn: "Подключить кошелёк и оплатить",
+      payBtnWait: "Ожидание кошелька…",
+      payBtnConfirm: "Ожидание подтверждения…",
+      payBtnRetry: "Повторить",
+      steps: ["Кошелёк переключится на Arc Testnet (добавится автоматически при необходимости)", "Подтвердите оплату в кошельке", "Как только платёж появится в сети, подписка активируется — страницу можно закрыть"],
+      noWallet: "В этом браузере кошелёк не найден.",
+      mmBtn: "Открыть в приложении MetaMask",
+      faucetPre: "Нет тестовых USDC? Получи их в ",
+      faucetLink: "кране Circle",
+      faucetPost: ".",
+      back: "← Acki Nacki Radar · Arc",
+      invalidLink: "Неверная ссылка. Откройте ссылку на оплату заново из сообщения в Telegram.",
+      disabled: "Оплата через Arc сейчас отключена.",
+      notFound: "Счёт не найден. Возможно, срок истёк или он уже оплачен.",
+      readFail: "Не удалось прочитать счёт.",
+      expired: "Срок действия счёта истёк. Начните новую попытку в панели.",
+      loadFail: "Не удалось связаться с сервером. Проверьте соединение и попробуйте снова.",
+      sent: "Платёж отправлен. Подписка активируется, как только он подтвердится в сети — придёт уведомление в Telegram.",
+      done: "Платёж завершён.",
+      doneRest: " К подписке добавлено {days} дн.",
+      status: "Статус",
+      confirmed: "подтверждено",
+      tx: "Транзакция",
+      cancelled: "Вы отменили платёж.",
+      insufficient: "Недостаточно средств. Получите тестовые USDC в кране Circle и попробуйте снова.",
+      sendFail: "Не удалось отправить платёж: ",
+      unknown: "неизвестная ошибка",
+    }
+  };
+
+  function pickLang() {
+    var stored = null;
+    try { stored = window.localStorage.getItem(LANG_KEY); } catch (e) {}
+    return (stored === "en" || stored === "ru") ? stored : "tr";
+  }
+
+  var LANG = pickLang();
+  var T = STR[LANG];
+  document.documentElement.lang = LANG;
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  // Static chrome, translated once at load — everything dynamic (amount,
+  // code, countdown, errors) is filled in later by the flow below.
+  $("t-brand").textContent = T.brand;
+  $("t-badgeTxt").textContent = T.badge;
+  $("t-title").textContent = T.title;
+  $("t-sub").textContent = T.sub;
+  $("t-warnStrong").textContent = T.warnStrong;
+  $("t-warnRest").textContent = T.warnRest;
+  $("t-loading").textContent = T.loading;
+  $("t-unit").textContent = T.unit;
+  $("t-kCode").textContent = T.kCode;
+  $("t-kNetwork").textContent = T.kNetwork;
+  $("t-kExpiry").textContent = T.kExpiry;
+  $("t-payBtn").textContent = T.payBtn;
+  $("t-noWallet").textContent = T.noWallet;
+  $("t-mmBtn").textContent = T.mmBtn;
+  $("t-back").textContent = T.back;
+
+  var stepsList = $("t-steps");
+  stepsList.innerHTML = "";
+  T.steps.forEach(function (s) {
+    var li = document.createElement("li");
+    li.textContent = s;
+    stepsList.appendChild(li);
+  });
+
+  var faucetNote = $("t-faucetNote");
+  faucetNote.innerHTML = "";
+  faucetNote.appendChild(document.createTextNode(T.faucetPre));
+  var faucetLink = document.createElement("a");
+  faucetLink.href = "https://faucet.circle.com";
+  faucetLink.target = "_blank";
+  faucetLink.rel = "noopener";
+  faucetLink.textContent = T.faucetLink;
+  faucetNote.appendChild(faucetLink);
+  faucetNote.appendChild(document.createTextNode(T.faucetPost));
+
+  var cfg = null;
+  var invoice = null;
+
+  function show(el, on) { el.classList.toggle("hide", !on); }
+
+  function fail(message) {
+    var b = $("banner");
+    b.className = "banner err";
+    b.textContent = message;
+    show($("loading"), false);
+  }
+
+  // 18-decimal native units -> a short human string. The ERC-20 view of USDC
+  // on Arc uses 6 decimals; this page never touches that one.
+  function formatUsdc(raw) {
+    var s = String(raw);
+    if (s.length <= 18) s = "0".repeat(19 - s.length) + s;
+    var whole = s.slice(0, s.length - 18);
+    var frac = s.slice(s.length - 18).slice(0, 2);
+    return whole + "." + frac;
+  }
+
+  function padHex(value, chars) {
+    var hex = String(value).replace(/^0x/, "").toLowerCase();
+    while (hex.length < chars) hex = "0" + hex;
+    return hex;
+  }
+
+  function toHexQuantity(decimalString) {
+    return "0x" + BigInt(decimalString).toString(16);
+  }
+
+  function getCode() {
+    var params = new URLSearchParams(location.search);
+    var raw = params.get("i") || params.get("code") || "";
+    return raw.trim().toUpperCase();
+  }
+
+  var pollTimer = null;
+
+  function showPaid(days) {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+
+    var b = $("banner");
+    b.className = "banner ok";
+    b.innerHTML = "<strong>" + T.done + "</strong>" + T.doneRest.replace("{days}", days || 3);
+
+    show($("actions"), false);
+    show($("invoice"), false);
+
+    var out = $("result");
+    var keep = out.innerHTML;
+    out.innerHTML = keep
+      + '<div class="row"><span class="k">' + T.status + '</span>'
+      + '<span class="v" style="color:var(--lime)">' + T.confirmed + '</span></div>';
+    show(out, true);
+  }
+
+  function pollSettlement(code) {
+    if (pollTimer) return;
+    var started = Date.now();
+
+    pollTimer = setInterval(function () {
+      // Give up quietly after ten minutes. By then something is wrong that a
+      // spinning page will not fix, and the invoice is still recoverable from
+      // Telegram.
+      if (Date.now() - started > 600000) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        return;
+      }
+
+      fetch("/api/arc/invoice/" + encodeURIComponent(code))
+        .then(function (r) { return r.json(); })
+        .then(function (body) {
+          if (body && body.ok && body.status === "paid") showPaid(body.days);
+        })
+        .catch(function () {});
+    }, 5000);
+  }
+
+  function renderExpiry() {
+    var left = new Date(invoice.expiresAt).getTime() - Date.now();
+    if (left <= 0) {
+      $("expiry").textContent = "—";
+      $("payBtn").disabled = true;
+      return;
+    }
+    var mins = Math.floor(left / 60000);
+    var secs = Math.floor((left % 60000) / 1000);
+    $("expiry").textContent = mins + "m " + (secs < 10 ? "0" : "") + secs + "s";
+  }
+
+  function boot() {
+    var code = getCode();
+
+    if (!/^[A-Z0-9]{4,32}$/.test(code)) {
+      fail(T.invalidLink);
+      return;
+    }
+
+    Promise.all([
+      fetch("/api/arc/config").then(function (r) { return r.json(); }),
+      fetch("/api/arc/invoice/" + encodeURIComponent(code)).then(function (r) {
+        return r.json().then(function (body) { return { status: r.status, body: body }; });
+      })
+    ]).then(function (results) {
+      cfg = results[0];
+      var res = results[1];
+
+      if (!cfg || !cfg.ok || !cfg.enabled) { fail(T.disabled); return; }
+      if (res.status === 404) { fail(T.notFound); return; }
+      if (!res.body || !res.body.ok) { fail(T.readFail); return; }
+
+      invoice = res.body;
+
+      if (invoice.status === "paid") {
+        show($("loading"), false);
+        showPaid(invoice.days);
+        return;
+      }
+
+      if (invoice.expired) { fail(T.expired); return; }
+
+      $("amount").textContent = formatUsdc(invoice.amountRaw);
+      $("code").textContent = invoice.code;
+      $("chain").textContent = cfg.chainName;
+      renderExpiry();
+      setInterval(renderExpiry, 1000);
+
+      show($("loading"), false);
+      show($("invoice"), true);
+
+      pollSettlement(invoice.code);
+
+      if (window.ethereum) {
+        show($("actions"), true);
+      } else {
+        show($("noWallet"), true);
+      }
+    }).catch(function () {
+      fail(T.loadFail);
+    });
+  }
+
+  $("mmBtn").addEventListener("click", function () {
+    var target = location.host + location.pathname + location.search;
+    location.href = "https://metamask.app.link/dapp/" + target;
+  });
+
+  $("payBtn").addEventListener("click", function () {
+    var btn = $("payBtn");
+    btn.disabled = true;
+    $("t-payBtn").textContent = T.payBtnWait;
+
+    var eth = window.ethereum;
+    var chainHex = "0x" + cfg.chainId.toString(16);
+
+    eth.request({ method: "eth_requestAccounts" })
+      .then(function (accounts) {
+        var from = accounts && accounts[0];
+        if (!from) throw new Error("NO_ACCOUNT");
+
+        return eth.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: chainHex }]
+        }).catch(function (switchError) {
+          if (switchError && (switchError.code === 4902 || switchError.code === -32603)) {
+            return eth.request({
+              method: "wallet_addEthereumChain",
+              params: [{
+                chainId: chainHex,
+                chainName: cfg.chainName,
+                nativeCurrency: { name: "USD Coin", symbol: "USDC", decimals: 18 },
+                rpcUrls: [cfg.rpcUrl],
+                blockExplorerUrls: [cfg.explorerUrl]
+              }]
+            });
+          }
+          throw switchError;
+        }).then(function () { return from; });
+      })
+      .then(function (from) {
+        $("t-payBtn").textContent = T.payBtnConfirm;
+
+        var data = PAY_SELECTOR
+          + padHex(cfg.merchant, 64)
+          + padHex(invoice.invoiceId, 64);
+
+        return eth.request({
+          method: "eth_sendTransaction",
+          params: [{ from: from, to: cfg.registry, value: toHexQuantity(invoice.amountRaw), data: data }]
+        });
+      })
+      .then(function (txHash) {
+        var b = $("banner");
+        b.className = "banner ok";
+        b.innerHTML = "<strong>" + T.sent + "</strong>";
+
+        show($("actions"), false);
+        var out = $("result");
+        out.innerHTML += '<div class="row"><span class="k">' + T.tx + '</span>'
+          + '<span class="v mono"><a href="' + cfg.explorerUrl + "/tx/" + txHash
+          + '" target="_blank" rel="noopener" style="color:var(--cyan)">' + txHash.slice(0, 10) + "…" + txHash.slice(-8)
+          + "</a></span></div>";
+        show(out, true);
+      })
+      .catch(function (error) {
+        var code = error && error.code;
+        var message;
+
+        if (code === 4001) {
+          message = T.cancelled;
+        } else if (String(error && error.message || "").indexOf("insufficient") !== -1) {
+          message = T.insufficient;
+        } else {
+          message = T.sendFail + (error && error.message ? error.message : T.unknown);
+        }
+
+        var b = $("banner");
+        b.className = "banner err";
+        b.textContent = message;
+
+        btn.disabled = false;
+        $("t-payBtn").textContent = T.payBtnRetry;
+      });
+  });
+
+  boot();
+})();
+</script>
+</body>
+</html>

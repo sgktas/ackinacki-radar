@@ -1,0 +1,9 @@
+node_modules/
+dist/
+
+# Vite builds straight into the nginx web root (see vite.config.ts outDir),
+# so there is no dist/ here — but keep the ignore in case that changes.
+
+# The previous owner's habit: timestamped copies left beside the original.
+# Git makes them unnecessary; they are not history worth keeping.
+*.before-*
