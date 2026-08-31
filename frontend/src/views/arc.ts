@@ -260,9 +260,10 @@ export function renderArc(): HTMLElement {
       el(
         'p',
         'arcp-text',
-        'Test ağı parası Circle’ın musluğundan ücretsiz alınır. Cüzdan adresini ' +
-          'yapıştır, ağ olarak Arc Testnet ve token olarak USDC seç. 1 USDC yeter; ' +
-          'işlem ücreti de aynı bakiyeden karşılanır.',
+        'Test ağı parası Circle’ın musluğundan ücretsiz alınır. Şu an sadece ' +
+          'MetaMask’ı destekliyoruz — musluğa da MetaMask cüzdanını bağla ya da ' +
+          'MetaMask adresini yapıştır, ağ olarak Arc Testnet ve token olarak USDC ' +
+          'seç. 1 USDC yeter; işlem ücreti de aynı bakiyeden karşılanır.',
       ),
       link(FAUCET, 'CIRCLE FAUCET’İ AÇ', 'arcp-btn'),
     ]),
