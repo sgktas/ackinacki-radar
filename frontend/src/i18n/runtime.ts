@@ -116,9 +116,21 @@ const CATALOG:
   ],
 
   [
-    'Test ağı parası Circle’ın musluğundan ücretsiz alınır. Cüzdan adresini yapıştır, ağ olarak Arc Testnet ve token olarak USDC seç. 1 USDC yeter; işlem ücreti de aynı bakiyeden karşılanır.',
-    'Test network funds come free from Circle’s faucet. Paste your wallet address, pick Arc Testnet as the network and USDC as the token. 1 USDC is enough; the transaction fee comes out of the same balance.',
-    'Средства тестовой сети выдаёт бесплатный кран Circle. Вставь адрес кошелька, выбери сеть Arc Testnet и токен USDC. Хватит 1 USDC — комиссия списывается с того же баланса.',
+    'Test ağı parası Circle’ın musluğundan ücretsiz alınır. Şu an sadece MetaMask’ı destekliyoruz — musluğa da MetaMask cüzdanını bağla ya da MetaMask adresini yapıştır, ağ olarak Arc Testnet ve token olarak USDC seç. 1 USDC yeter; işlem ücreti de aynı bakiyeden karşılanır.',
+    'Test network funds come free from Circle’s faucet. We only support MetaMask right now — connect MetaMask to the faucet, or paste your MetaMask address, pick Arc Testnet as the network and USDC as the token. 1 USDC is enough; the transaction fee comes out of the same balance.',
+    'Средства тестовой сети выдаёт бесплатный кран Circle. Сейчас мы поддерживаем только MetaMask — подключи MetaMask к крану или вставь адрес MetaMask, выбери сеть Arc Testnet и токен USDC. Хватит 1 USDC — комиссия списывается с того же баланса.',
+  ],
+
+  [
+    'Ağ',
+    'Network',
+    'Сеть',
+  ],
+
+  [
+    'TAP İLERLEMESİ',
+    'TAP PROGRESS',
+    'ПРОГРЕСС TAP',
   ],
 
   [
@@ -2414,7 +2426,37 @@ function dynamicTranslation(
   lang: UiLang,
 ): string | null {
 
+  // A live countdown (the invoice expiry timer) re-renders this every
+  // second, so it has to go through the regex path — a static catalog
+  // entry cannot match a number that keeps changing.
   let match =
+    value.match(
+      /^(\d+)\s+dakika$/
+    ) ||
+    value.match(
+      /^(\d+)\s+minutes?$/
+    ) ||
+    value.match(
+      /^(\d+)\s+мин\.$/
+    );
+
+  if (match) {
+
+    const n =
+      Number(
+        match[1]
+      );
+
+
+    return lang === 'tr'
+      ? `${n} dakika`
+      : lang === 'en'
+        ? `${n} ${n === 1 ? 'minute' : 'minutes'}`
+        : `${n} мин.`;
+  }
+
+
+  match =
     value.match(
       /^(\d+)\s+gün$/
     ) ||
