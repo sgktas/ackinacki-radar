@@ -124,6 +124,11 @@
   word-break: break-all;
 }
 
+.arc-value.good {
+  color: #9dff6b;
+  font-weight: 600;
+}
+
 .arc-value.mono {
   font: 700 13px "JetBrains Mono", monospace;
   letter-spacing: 0.1em;

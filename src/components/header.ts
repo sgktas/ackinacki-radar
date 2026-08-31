@@ -88,6 +88,9 @@ const HEADER_COPY = {
       '/boost-farm':
         'Boost Farm',
 
+      '/arc':
+        'Arc · Hediye',
+
       '/plans':
         'Planlar',
 
@@ -150,6 +153,9 @@ const HEADER_COPY = {
       '/boost-farm':
         'Boost Farm',
 
+      '/arc':
+        'Arc · Free',
+
       '/plans':
         'Plans',
 
@@ -211,6 +217,9 @@ const HEADER_COPY = {
 
       '/boost-farm':
         'Boost Farm',
+
+      '/arc':
+        'Arc · Бонус',
 
       '/plans':
         'Планы',

@@ -193,6 +193,10 @@
         <h3>Deneme kullananlar</h3>
         <div class="scroll"><table id="t-trials"></table></div>
       </div>
+      <div class="card">
+        <h3>Arc denemeleri <span class="pill" id="arc-quota">—</span></h3>
+        <div class="scroll"><table id="t-arc"></table></div>
+      </div>
     </section>
 
     <!-- ============ CÜZDANLAR ============ -->
@@ -496,6 +500,31 @@
         + '<td><button class="act" data-notify="' + esc(id) + '">bildirim</button></td></tr>';
     });
     table($('t-trials'), ['chatId','işlem'], trialRows, 'Deneme kullanan yok.');
+
+    // Arc testnet trials. A separate ledger from the free trial above, so it
+    // gets its own table. "sıfırla" clears only the ledger entry, never the
+    // days that were granted — revoking a subscription is a different button
+    // with a different confirmation.
+    var arcList = d.payments.arcTrialUsedList || [];
+
+    $('arc-quota').textContent =
+      arcList.length + ' / ' + (d.payments.arcTrialQuota || 0)
+      + (d.payments.arcPaymentsEnabled ? '' : ' · kapalı');
+
+    var arcRows = arcList.map(function(a){
+      return '<tr>'
+        + '<td>' + esc(a.chatId) + '</td>'
+        + '<td>' + esc(a.telegramUsername || a.telegramFirstName || '—') + '</td>'
+        + '<td>' + esc(a.amountFormatted || '—') + '</td>'
+        + '<td>' + esc(dt(a.grantedAt)) + '</td>'
+        + '<td>' + esc(dt(a.activeUntil)) + '</td>'
+        + '<td><button class="act danger" data-arc-reset="' + esc(a.chatId) + '">sıfırla</button></td>'
+        + '</tr>';
+    });
+
+    table($('t-arc'),
+      ['chatId','kullanıcı','tutar','tanımlandı','abonelik bitişi','işlem'],
+      arcRows, 'Arc denemesi alan yok.');
   }
 
   function renderMiners(d){
@@ -854,6 +883,30 @@
       if (!confirm(giftId + ' hesabına 3 gün hediye abonelik verilsin mi?')) return;
       giftBtn.disabled = true;
       await grant(Number(giftId), 3, 'gift', null);
+      return;
+    }
+
+    var arcBtn = ev.target.closest('[data-arc-reset]');
+    if (arcBtn){
+      var arcChat = arcBtn.getAttribute('data-arc-reset');
+      if (!confirm(
+        arcChat + ' hesabının Arc denemesi sıfırlansın mı?\n\n'
+        + 'Verilen günler geri alınmaz — sadece deneme hakkı ve varsa açık faturası silinir, '
+        + 'böylece hesap tekrar deneyebilir.'
+      )) return;
+      arcBtn.disabled = true;
+      try {
+        var arcRes = await fetch('/api/admin/arc/trial/reset', {
+          method:'POST', headers: headers(),
+          body: JSON.stringify({ chatId: Number(arcChat) })
+        });
+        var arcData = await arcRes.json();
+        if (!arcRes.ok || !arcData.ok) throw new Error(arcData.error || ('HTTP ' + arcRes.status));
+        await load();
+      } catch (e){
+        alert('Arc denemesi sifirlanamadi: ' + e.message);
+        arcBtn.disabled = false;
+      }
       return;
     }
 

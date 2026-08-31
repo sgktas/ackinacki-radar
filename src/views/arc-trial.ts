@@ -13,6 +13,8 @@ import '../styles/arc-trial.css';
 
 import { authHeaders } from '../auth/session';
 
+import { getUiLocale } from '../i18n/runtime';
+
 type ArcTrialInvoice = {
   code: string | null;
   amountRaw: string;
@@ -27,6 +29,15 @@ type ArcTrialStatus = {
   quotaReached?: boolean;
   days?: number;
   priceUsd?: number;
+  taken?: number;
+  quota?: number;
+  subscription?: {
+    planId?: string;
+    activeUntil?: string;
+    active?: boolean;
+  } | null;
+  grantedAt?: string | null;
+  grantedUntil?: string | null;
   invoice?: ArcTrialInvoice | null;
   error?: string;
 };
@@ -195,22 +206,95 @@ function renderOffer(
   );
 }
 
-// A closed state, for the Arc page. On the plans page an unavailable promo
-// should just vanish; on a page dedicated to Arc, disappearing would leave the
-// visitor wondering whether it broke.
+function formatDate(value: string | null | undefined): string {
+  if (!value) {
+    return '—';
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return '—';
+  }
+
+  return date.toLocaleString(getUiLocale(), {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function daysLeft(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const ms = new Date(value).getTime() - Date.now();
+
+  return Number.isNaN(ms) ? null : Math.max(0, Math.ceil(ms / 86400000));
+}
+
+// Once the trial has been taken, the card stops being an offer and becomes a
+// receipt: what was granted, when, and how long is left. Saying only "you used
+// it" wastes the one place the user comes to check.
+function renderGranted(box: HTMLElement, status: ArcTrialStatus): void {
+  box.replaceChildren();
+
+  const days = status.days ?? 3;
+  const until = status.grantedUntil ?? status.subscription?.activeUntil ?? null;
+  const left = daysLeft(status.subscription?.activeUntil ?? until);
+
+  box.append(
+    head('KULLANILDI', `+${days} GÜN`),
+    el('h3', 'arc-title', 'Arc hediyesi hesabına tanımlandı'),
+  );
+
+  const rows = el('div', 'arc-rows');
+
+  const add = (key: string, value: string, tone?: string) => {
+    const row = el('div', 'arc-row');
+    row.append(
+      el('span', 'arc-key', key),
+      el('span', `arc-value${tone ? ` ${tone}` : ''}`, value),
+    );
+    rows.append(row);
+  };
+
+  add('Kazanılan', `${days} gün`, 'good');
+  add('Tanımlandı', formatDate(status.grantedAt));
+  add('Abonelik bitişi', formatDate(status.subscription?.activeUntil ?? until));
+
+  if (left !== null) {
+    add('Kalan', `${left} gün`, 'good');
+  }
+
+  box.append(
+    rows,
+    el(
+      'p',
+      'arc-note',
+      'Bu hesap Arc denemesini kullandı. Deneme hesap başına bir kezdir; ' +
+        'aboneliğini uzatmak için Planlar sayfasını kullanabilirsin.',
+    ),
+  );
+}
+
+// Closed for a reason other than "you already took it".
 function renderClosed(box: HTMLElement, status: ArcTrialStatus): void {
   box.replaceChildren();
 
-  const reason = status.used
-    ? 'Bu hesap denemeyi kullandı.'
-    : status.quotaReached
-      ? 'Kontenjan doldu. Yeni kontenjan açtığımızda burada duyuracağız.'
-      : 'Deneme şu anda kapalı.';
-
   box.append(
-    head(status.used ? 'KULLANILDI' : 'KAPALI', '—'),
+    head('KAPALI', '—'),
     el('h3', 'arc-title', 'Arc denemesi'),
-    el('p', 'arc-lead', reason),
+    el(
+      'p',
+      'arc-lead',
+      status.quotaReached
+        ? 'Kontenjan doldu. Yeni kontenjan açtığımızda burada duyuracağız.'
+        : 'Deneme şu anda kapalı.',
+    ),
   );
 }
 
@@ -294,7 +378,12 @@ export function renderArcTrialCard(
           return;
         }
 
-        renderClosed(box, status);
+        if (status.used) {
+          renderGranted(box, status);
+        } else {
+          renderClosed(box, status);
+        }
+
         box.hidden = false;
         return;
       }
