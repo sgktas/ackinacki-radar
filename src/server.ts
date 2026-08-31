@@ -36,6 +36,10 @@ import {
   usdToTonRaw,
   usdtAmountToRaw,
 } from "./services/tonPayments";
+import {
+  codeToInvoiceId,
+  usdToUsdcRaw,
+} from "./services/arcPayments";
 import { getChainEpochClock } from "./services/epochClock";
 
 // Same switches the bot's TON checker reads — the dashboard only issues the
@@ -1831,7 +1835,7 @@ type Subscription = {
 type PaymentHistoryEntry = {
   id: string;
   status: "confirmed" | "manual_grant" | "invoice_deleted";
-  source: "nackl" | "ton" | "usdt" | "shell" | "stars" | "admin";
+  source: "nackl" | "ton" | "usdt" | "shell" | "stars" | "admin" | "arc";
   chatId: number;
   planId: string;
   invoiceId?: string | null;
@@ -1869,6 +1873,9 @@ type PaymentsState = {
   seenNacklMessageIds?: string[];
   nacklBaselineReady?: boolean;
   trialUsed?: number[];
+  // Separate ledger from trialUsed: the free trial and the Arc testnet trial
+  // are different offers, and a person may take one of each.
+  arcTrialUsed?: number[];
   starsCharges?: string[];
   tonLastLt?: number;
   paymentHistory?: PaymentHistoryEntry[];
@@ -5652,6 +5659,132 @@ export function startServer(port: number) {
     }
   });
 
+  // --- Arc testnet trial, from the dashboard ----------------------------
+  //
+  // Deliberately NOT a plan. It is paid for with faucet USDC that costs the
+  // payer nothing, so listing it beside the 5/10/25 USD plans would invite the
+  // reading that it is the cheap tier. It is a promo with its own ledger
+  // (arcTrialUsed), its own quota, and its own switch.
+  //
+  // Kept out of /api/dashboard/me on purpose: that response is large and
+  // central, and this feature should not be able to break it.
+
+  function arcTrialConfig() {
+    const registry = String(process.env.ARC_REGISTRY_ADDRESS || "").trim();
+    const merchant = String(process.env.ARC_MERCHANT_ADDRESS || "").trim();
+
+    return {
+      registry,
+      merchant,
+      enabled:
+        String(process.env.ARC_PAYMENTS_ENABLED || "false").toLowerCase() === "true" &&
+        Boolean(registry) &&
+        Boolean(merchant),
+      days: Number(process.env.ARC_TRIAL_DAYS || 3),
+      quota: Number(process.env.ARC_TRIAL_QUOTA || 100),
+      priceUsd: Number(process.env.ARC_TRIAL_PRICE_USD || 1),
+      expiryMs: Number(process.env.ARC_INVOICE_EXPIRY_MINUTES || 60) * 60 * 1000,
+      payUrl: String(process.env.ARC_PAY_URL || "https://ackinackiradar.com/pay").trim(),
+    };
+  }
+
+  function arcTrialStatus(chatId: number) {
+    const cfg = arcTrialConfig();
+    const state = readPaymentsState();
+    const used = state.arcTrialUsed ?? [];
+    const now = Date.now();
+
+    const pending = state.pendingInvoices.find(
+      (item) =>
+        item.chatId === chatId &&
+        item.currency === "usdc" &&
+        new Date(item.expiresAt).getTime() > now,
+    );
+
+    return {
+      ok: true as const,
+      enabled: cfg.enabled,
+      used: used.includes(chatId),
+      quotaReached: used.length >= cfg.quota,
+      days: cfg.days,
+      priceUsd: cfg.priceUsd,
+      invoice: pending
+        ? {
+            code: pending.code ?? null,
+            amountRaw: pending.amountRaw,
+            expiresAt: pending.expiresAt,
+            payUrl: `${cfg.payUrl}?i=${pending.code ?? ""}`,
+          }
+        : null,
+    };
+  }
+
+  app.get("/api/dashboard/arc/trial", requireDashboardAuth, (req: any, res) => {
+    res.json(arcTrialStatus(req.telegramId));
+  });
+
+  app.post("/api/dashboard/arc/trial", requireDashboardAuth, (req: any, res) => {
+    const chatId = req.telegramId as number;
+    const cfg = arcTrialConfig();
+
+    if (!cfg.enabled) {
+      res.status(400).json({ ok: false, error: "ARC_NOT_LIVE" });
+      return;
+    }
+
+    const state = readPaymentsState();
+    const used = state.arcTrialUsed ?? [];
+
+    if (used.includes(chatId)) {
+      res.status(400).json({ ok: false, error: "ARC_TRIAL_ALREADY_USED" });
+      return;
+    }
+
+    if (used.length >= cfg.quota) {
+      res.status(400).json({ ok: false, error: "ARC_TRIAL_QUOTA_REACHED" });
+      return;
+    }
+
+    const now = Date.now();
+
+    // Reuse a live invoice rather than minting a second code for the same
+    // person; two open codes only invites paying the wrong one.
+    let invoice = state.pendingInvoices.find(
+      (item) =>
+        item.chatId === chatId &&
+        item.currency === "usdc" &&
+        new Date(item.expiresAt).getTime() > now,
+    );
+
+    if (!invoice) {
+      const code = buildInvoiceCode();
+
+      invoice = {
+        id: `${chatId}:arc:${now}`,
+        chatId,
+        planId: "standard",
+        amountRaw: usdToUsdcRaw(cfg.priceUsd),
+        createdAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + cfg.expiryMs).toISOString(),
+        code,
+        currency: "usdc",
+        arcInvoiceId: codeToInvoiceId(code),
+      };
+
+      state.pendingInvoices.push(invoice);
+      writePaymentsState(state);
+    }
+
+    res.json({
+      ok: true,
+      code: invoice.code,
+      amountRaw: invoice.amountRaw,
+      expiresAt: invoice.expiresAt,
+      days: cfg.days,
+      payUrl: `${cfg.payUrl}?i=${invoice.code ?? ""}`,
+    });
+  });
+
   // --- Arc payment page -------------------------------------------------
   //
   // The page is static and served under the site's CSP, which is
@@ -5708,8 +5841,37 @@ export function startServer(port: number) {
     );
 
     if (!invoice) {
-      // Covers "never existed", "already paid" and "expired" alike: telling
-      // them apart would let someone probe which codes are real.
+      // Settled invoices leave the pending list, so before answering "gone"
+      // check whether we credited it — that is what turns the payment page
+      // from "sent" into "confirmed".
+      //
+      // Answered from our own payment history rather than by querying the
+      // chain: this endpoint takes no auth, and an outbound RPC call per
+      // request would hand a stranger our rate limit. History is also the
+      // right source here, since the question is "did WE credit it", not
+      // "is there money on chain".
+      const settledId = codeToInvoiceId(code);
+      const settled = (state.paymentHistory ?? []).find(
+        (entry) =>
+          entry.source === "arc" &&
+          entry.status === "confirmed" &&
+          entry.transactionId === settledId,
+      );
+
+      if (settled) {
+        res.json({
+          ok: true,
+          code,
+          status: "paid",
+          // Deliberately no chatId and no activeUntil: the code travels
+          // through chat and should not report on an account.
+          days: Number(process.env.ARC_TRIAL_DAYS || 3),
+        });
+        return;
+      }
+
+      // Covers "never existed" and "expired" alike: telling them apart would
+      // let someone probe which codes are real.
       res.status(404).json({ ok: false, error: "INVOICE_NOT_FOUND" });
       return;
     }
@@ -5719,6 +5881,7 @@ export function startServer(port: number) {
     res.json({
       ok: true,
       code,
+      status: "pending",
       amountRaw: invoice.amountRaw,
       invoiceId: invoice.arcInvoiceId || null,
       expiresAt: invoice.expiresAt,

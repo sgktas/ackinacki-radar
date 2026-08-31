@@ -188,6 +188,68 @@
     $("expiry").textContent = mins + " dk " + (secs < 10 ? "0" : "") + secs + " sn";
   }
 
+  // The invoice leaves the pending list the moment the bot credits it, and the
+  // server then reports status "paid". Polling that is how this page stops
+  // saying "sent" and starts saying "done" — the payer should not have to go
+  // to Telegram to find out whether it worked.
+  var pollTimer = null;
+
+  function showPaid(days) {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+
+    var b = $("banner");
+    b.className = "banner ok";
+    b.innerHTML =
+      "<strong>Ödeme tamamlandı.</strong> Aboneliğine "
+      + (days || 3)
+      + " gün eklendi.";
+
+    show($("actions"), false);
+    show($("invoice"), false);
+
+    var out = $("result");
+    var keep = out.innerHTML;
+    out.innerHTML =
+      '<div class="row"><span class="k">Durum</span>'
+      + '<span class="v" style="color:#7ee787">onaylandı</span></div>'
+      + keep;
+    show(out, true);
+  }
+
+  function pollSettlement(code) {
+    if (pollTimer) {
+      return;
+    }
+
+    var started = Date.now();
+
+    pollTimer = setInterval(function () {
+      // Give up quietly after ten minutes. By then something is wrong that a
+      // spinning page will not fix, and the invoice is still recoverable from
+      // Telegram.
+      if (Date.now() - started > 600000) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        return;
+      }
+
+      fetch("/api/arc/invoice/" + encodeURIComponent(code))
+        .then(function (r) { return r.json(); })
+        .then(function (body) {
+          if (body && body.ok && body.status === "paid") {
+            showPaid(body.days);
+          }
+        })
+        .catch(function () {
+          // A failed poll is not worth telling the payer about; the next one
+          // is five seconds away.
+        });
+    }, 5000);
+  }
+
   function boot() {
     var code = getCode();
 
@@ -223,6 +285,14 @@
 
       invoice = res.body;
 
+      // Someone reopening the link after paying should see the outcome, not an
+      // error about a missing invoice.
+      if (invoice.status === "paid") {
+        show($("loading"), false);
+        showPaid(invoice.days);
+        return;
+      }
+
       if (invoice.expired) {
         fail("Bu faturanın süresi dolmuş. Telegram'dan /trial_arc ile yenisini al.");
         return;
@@ -236,6 +306,10 @@
 
       show($("loading"), false);
       show($("invoice"), true);
+
+      // Watch from the start: the payer may have paid in another tab, or be
+      // returning to a link they left open.
+      pollSettlement(invoice.code);
 
       if (window.ethereum) {
         show($("actions"), true);
@@ -319,6 +393,8 @@
           + '" target="_blank" rel="noopener">' + txHash.slice(0, 10) + "…" + txHash.slice(-8)
           + "</a></span></div>";
         show(out, true);
+
+        pollSettlement(invoice.code);
       })
       .catch(function (error) {
         var code = error && error.code;
