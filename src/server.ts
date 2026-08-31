@@ -5332,6 +5332,32 @@ export function startServer(port: number) {
           })),
         starsChargeList: ((payments as any).starsCharges || []).slice(-100),
         trialUsedList: ((payments as any).trialUsed || []),
+        // Arc testnet trials are a separate offer with a separate ledger, so
+        // they get their own list rather than being mixed into trialUsedList.
+        arcTrialUsedList: ((payments as any).arcTrialUsed || []).map(
+          (chatId: number) => {
+            const grant = (payments.paymentHistory || [])
+              .filter(
+                (item) => item.source === "arc" && item.chatId === chatId,
+              )
+              .slice(-1)[0];
+
+            return {
+              chatId,
+              ...paymentParty(chatId),
+              grantedAt: grant?.recordedAt ?? null,
+              activeUntil: grant?.activeUntil ?? null,
+              amountFormatted: grant
+                ? formatAdminPaymentAmount(grant.amountRaw, grant.currency)
+                : null,
+              invoiceCode: grant?.transactionId ?? null,
+            };
+          },
+        ),
+        arcTrialQuota: Number(process.env.ARC_TRIAL_QUOTA || 100),
+        arcPaymentsEnabled:
+          String(process.env.ARC_PAYMENTS_ENABLED || "false").toLowerCase() ===
+          "true",
       },
       radar: {
         watches: monitor.length,
@@ -5555,6 +5581,43 @@ export function startServer(port: number) {
 
   // Repair action: grant days to an account by hand — for a payment that
   // arrived without a usable code, or an apology.
+  // Clears one account's Arc trial so it can be taken again. This exists for
+  // testing the rail end to end without minting a second Telegram account —
+  // and it does NOT touch the subscription that was granted, since revoking
+  // days is a separate, deliberate action with its own endpoint.
+  app.post("/api/admin/arc/trial/reset", requireAdminAuth, (req: any, res) => {
+    const chatId = Number(req.body?.chatId);
+
+    if (!Number.isFinite(chatId) || chatId === 0) {
+      res.status(400).json({ ok: false, error: "INVALID_CHAT_ID" });
+      return;
+    }
+
+    const state = readPaymentsState();
+    const before = (state.arcTrialUsed ?? []).length;
+
+    state.arcTrialUsed = (state.arcTrialUsed ?? []).filter(
+      (id) => Number(id) !== chatId,
+    );
+
+    // Any invoice still open for that account would otherwise be reused
+    // instead of a fresh one being minted.
+    const invoicesBefore = state.pendingInvoices.length;
+    state.pendingInvoices = state.pendingInvoices.filter(
+      (item) => !(item.currency === "usdc" && item.chatId === chatId),
+    );
+
+    writePaymentsState(state);
+
+    res.json({
+      ok: true,
+      chatId,
+      removed: before !== state.arcTrialUsed.length,
+      invoicesDropped: invoicesBefore - state.pendingInvoices.length,
+      remaining: state.arcTrialUsed.length,
+    });
+  });
+
   app.post("/api/admin/subscription/grant", requireAdminAuth, (req: any, res) => {
     const chatId = Number(req.body?.chatId);
     const days = Number(req.body?.days);
@@ -5701,6 +5764,15 @@ export function startServer(port: number) {
         new Date(item.expiresAt).getTime() > now,
     );
 
+    // What the trial actually bought, so the Arc page can show an outcome
+    // rather than just an offer. Safe to include here and not on the public
+    // invoice endpoint: this one is behind requireDashboardAuth.
+    const sub = state.subscriptions?.[String(chatId)];
+
+    const grant = (state.paymentHistory ?? [])
+      .filter((entry) => entry.source === "arc" && entry.chatId === chatId)
+      .slice(-1)[0];
+
     return {
       ok: true as const,
       enabled: cfg.enabled,
@@ -5708,6 +5780,17 @@ export function startServer(port: number) {
       quotaReached: used.length >= cfg.quota,
       days: cfg.days,
       priceUsd: cfg.priceUsd,
+      taken: used.length,
+      quota: cfg.quota,
+      subscription: sub
+        ? {
+            planId: sub.planId,
+            activeUntil: sub.activeUntil,
+            active: new Date(sub.activeUntil).getTime() > Date.now(),
+          }
+        : null,
+      grantedAt: grant?.recordedAt ?? null,
+      grantedUntil: grant?.activeUntil ?? null,
       invoice: pending
         ? {
             code: pending.code ?? null,
