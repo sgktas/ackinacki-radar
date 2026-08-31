@@ -1,0 +1,951 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Acki Nacki Radar — Admin</title>
+<style>
+  :root{
+    --bg:#05060a; --panel:#0c111c; --panel-2:#0f1524; --line:#1b2740;
+    --text:#edf2f7; --muted:#8a95a8; --cyan:#00e5ff; --lime:#9dff6b;
+    --warn:#ffb020; --err:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:14px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+  .layout{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:100vh}
+
+  /* ---------- sidebar ---------- */
+  .side{border-right:1px solid var(--line);background:var(--panel);
+    padding:18px 12px;display:flex;flex-direction:column;gap:4px}
+  .side h1{font-size:14px;margin:0 0 2px;color:var(--cyan);letter-spacing:.04em}
+  .side .tag{color:var(--muted);font-size:10px;letter-spacing:.12em;
+    text-transform:uppercase;margin:0 0 16px}
+  .side .grp{color:var(--muted);font-size:9px;letter-spacing:.14em;
+    text-transform:uppercase;margin:14px 0 4px;padding:0 8px}
+  .nav{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:8px;
+    color:var(--muted);cursor:pointer;border:1px solid transparent;font-size:12.5px;
+    text-align:left;background:transparent;font-family:inherit;width:100%}
+  .nav:hover{color:var(--text);background:rgba(0,229,255,.06)}
+  .nav.on{color:var(--cyan);background:rgba(0,229,255,.1);border-color:rgba(0,229,255,.25)}
+  .nav .n{margin-left:auto;font-size:11px;color:var(--muted)}
+  .nav.on .n{color:var(--cyan)}
+  .side .foot{margin-top:auto;padding:12px 8px 0;color:var(--muted);font-size:10px;
+    border-top:1px solid var(--line)}
+
+  /* ---------- main ---------- */
+  .main{padding:22px 22px 60px;min-width:0}
+  .head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+    flex-wrap:wrap;margin-bottom:16px}
+  .head h2{font-size:17px;margin:0}
+  .stamp{color:var(--muted);font-size:11.5px}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:16px;margin-bottom:14px}
+  .card h3{font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--muted);margin:0 0 12px;font-weight:600}
+
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .tile{background:var(--panel-2);border:1px solid var(--line);border-radius:9px;
+    padding:13px;cursor:pointer;transition:border-color .15s,transform .15s;
+    font-family:inherit;color:inherit;text-align:left;width:100%}
+  .tile:hover{border-color:var(--cyan);transform:translateY(-1px)}
+  .tile b{display:block;font-size:23px;color:var(--cyan);font-weight:700;line-height:1.2}
+  .tile span{color:var(--muted);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}
+  .tile em{display:block;margin-top:6px;font-style:normal;font-size:10px;color:var(--muted);opacity:.75}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em}
+  tr:last-child td{border-bottom:none}
+  .scroll{overflow-x:auto}
+
+  .pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;
+    border:1px solid var(--line)}
+  .ok{color:var(--lime);border-color:rgba(157,255,107,.35)}
+  .warn{color:var(--warn);border-color:rgba(255,176,32,.35)}
+  .bad{color:var(--err);border-color:rgba(255,107,107,.35)}
+
+  button.act{background:transparent;border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:5px 10px;cursor:pointer;font:inherit;font-size:11.5px}
+  button.act:hover{border-color:var(--cyan);color:var(--cyan)}
+  button.act:disabled{opacity:.45;cursor:not-allowed}
+  button.act.danger:hover{border-color:var(--err);color:var(--err)}
+  button.act.approve{border-color:rgba(157,255,107,.35);color:var(--lime)}
+  button.act.approve:hover{border-color:var(--lime);background:rgba(157,255,107,.07)}
+  .identity{min-width:150px;white-space:normal;line-height:1.35}
+  .identity .primary{color:var(--text);font-weight:700}
+  .subtle{display:block;color:var(--muted);font-size:10.5px;margin-top:2px}
+  .wallet{color:var(--cyan);font-weight:600}
+  .mono-clip{display:inline-block;max-width:170px;overflow:hidden;text-overflow:ellipsis;
+    vertical-align:bottom;white-space:nowrap;color:var(--muted)}
+  .sender-wallet{min-width:190px;white-space:normal;line-height:1.35}
+  .sender-wallet .wallet-name{display:block;color:var(--cyan);font-size:13px;font-weight:800}
+  .sender-wallet .wallet-unknown{display:block;color:var(--warn);font-size:10px;font-weight:700;
+    letter-spacing:.05em;text-transform:uppercase}
+  .sender-wallet .telegram{display:block;color:var(--text);font-size:10.5px;margin-top:2px}
+  .sender-wallet .mono-clip{display:block;max-width:240px;margin-top:3px;font-size:10px}
+  .pay-actions{display:flex;gap:6px}
+  .pay-summary{display:grid;grid-template-columns:repeat(3,minmax(140px,1fr));gap:9px;margin-bottom:14px}
+  .pay-summary div{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+  .pay-summary b{display:block;color:var(--cyan);font-size:20px}
+  .pay-summary span{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+  .wallet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .wallet-head h3{margin-bottom:4px}
+  .wallet-title{font-size:16px;font-weight:700;color:var(--text)}
+  .wallet-address{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:10.5px;min-width:0}
+  .wallet-address code{display:inline-block;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wallet-balances{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:9px;margin:14px 0}
+  .wallet-balance{background:linear-gradient(145deg,rgba(0,229,255,.055),rgba(157,255,107,.025));
+    border:1px solid var(--line);border-radius:9px;padding:12px}
+  .wallet-balance b{display:block;color:var(--lime);font-size:20px;line-height:1.25}
+  .wallet-balance span{color:var(--muted);font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+  .wallet-meta{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:6px}
+
+  input,textarea,select{background:var(--panel-2);border:1px solid var(--line);
+    color:var(--text);border-radius:7px;padding:7px 10px;font:inherit;font-size:12.5px}
+  input:focus,textarea:focus{outline:none;border-color:var(--cyan)}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .note{color:var(--muted);font-size:11.5px;margin:8px 0 0;line-height:1.6}
+
+  .gate{text-align:center;padding:64px 16px;color:var(--muted)}
+  .gate a{color:var(--cyan)}
+  .hidden{display:none!important}
+  .empty{color:var(--muted);padding:14px 8px;font-size:12.5px}
+
+  @media (max-width:820px){
+    .layout{grid-template-columns:1fr}
+    .side{border-right:0;border-bottom:1px solid var(--line);
+      flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px;padding:12px}
+    .side h1,.side .tag,.side .grp,.side .foot{display:none}
+    .nav{width:auto}
+    .pay-summary{grid-template-columns:1fr}
+    .wallet-balances{grid-template-columns:repeat(2,minmax(120px,1fr))}
+  }
+</style>
+</head>
+<body>
+
+<div id="gate" class="gate">
+  Bu sayfa yalnızca yöneticiler içindir.<br/><br/>
+  <a href="/dashboard.html">Önce panele Telegram ile giriş yap</a>, sonra buraya dön.
+</div>
+
+<div id="app" class="layout hidden">
+  <aside class="side">
+    <h1>Acki Nacki Radar</h1>
+    <p class="tag">Admin Console</p>
+
+    <div class="grp">Genel</div>
+    <button class="nav on" data-view="overview">📊 Özet</button>
+
+    <div class="grp">Kullanıcılar</div>
+    <button class="nav" data-view="users">👥 Kullanıcılar <span class="n" id="c-users"></span></button>
+    <button class="nav" data-view="subs">💳 Abonelikler <span class="n" id="c-subs"></span></button>
+
+    <div class="grp">Madencilik</div>
+    <button class="nav" data-view="miners">⛏ Cüzdanlar <span class="n" id="c-miners"></span></button>
+    <button class="nav" data-view="radar">📡 Radar <span class="n" id="c-radar"></span></button>
+
+    <div class="grp">Ödemeler</div>
+    <button class="nav" data-view="payments">🧾 Ödemeler <span class="n" id="c-pay"></span></button>
+
+    <div class="grp">İşlemler</div>
+    <button class="nav" data-view="actions">⚙️ Araçlar</button>
+
+    <div class="foot">Otomatik yenileme: 30 sn</div>
+  </aside>
+
+  <main class="main">
+    <div class="head">
+      <h2 id="view-title">Özet</h2>
+      <span class="stamp" id="stamp">…</span>
+    </div>
+
+    <!-- ============ ÖZET ============ -->
+    <section class="view" id="v-overview">
+      <div class="card">
+        <h3>Özet — bir karta tıkla, detayına git</h3>
+        <div class="tiles" id="tiles"></div>
+      </div>
+    </section>
+
+    <!-- ============ KULLANICILAR ============ -->
+    <section class="view hidden" id="v-users">
+      <div class="card">
+        <h3>Kullanıcılar</h3>
+        <div class="row" style="margin-bottom:10px">
+          <input id="u-search" placeholder="ara: id, kullanıcı adı, isim…" size="30" />
+        </div>
+        <div class="scroll"><table id="t-users"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ ABONELİKLER ============ -->
+    <section class="view hidden" id="v-subs">
+      <div class="card">
+        <h3>Abonelikler</h3>
+        <div class="scroll"><table id="t-subs"></table></div>
+      </div>
+      <div class="card">
+        <h3>Deneme kullananlar</h3>
+        <div class="scroll"><table id="t-trials"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ CÜZDANLAR ============ -->
+    <section class="view hidden" id="v-miners">
+      <div class="card">
+        <h3>Madencilik cüzdanları</h3>
+        <div class="scroll"><table id="t-miners"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ RADAR ============ -->
+    <section class="view hidden" id="v-radar">
+      <div class="card">
+        <h3>Radar kayıtları</h3>
+        <p class="note" id="radar-note"></p>
+        <div class="scroll"><table id="t-radar"></table></div>
+      </div>
+    </section>
+
+    <!-- ============ ÖDEMELER ============ -->
+    <section class="view hidden" id="v-payments">
+      <div class="pay-summary">
+        <div><b id="p-pending">0</b><span>bekleyen fatura</span></div>
+        <div><b id="p-confirmed">0</b><span>otomatik onaylanan</span></div>
+        <div><b id="p-history">0</b><span>toplam ödeme kaydı</span></div>
+      </div>
+      <div class="card">
+        <div class="wallet-head">
+          <div>
+            <h3>Ödeme cüzdanı</h3>
+            <div class="wallet-title" id="payment-wallet-name">ackinackiradarpayments</div>
+            <div class="wallet-address">
+              <code id="payment-wallet-address">Zincir verisi bekleniyor…</code>
+              <button class="act" id="payment-wallet-copy" disabled>kopyala</button>
+            </div>
+          </div>
+          <div class="wallet-meta">
+            <span class="pill" id="payment-wallet-status">YÜKLENİYOR</span>
+            <button class="act" id="payment-wallet-refresh">yenile</button>
+          </div>
+        </div>
+        <div class="wallet-balances">
+          <div class="wallet-balance"><b id="wallet-nackl">—</b><span>NACKL bakiye</span></div>
+          <div class="wallet-balance"><b id="wallet-shell">—</b><span>SHELL bakiye</span></div>
+          <div class="wallet-balance"><b id="wallet-usdc">—</b><span>USDC bakiye</span></div>
+          <div class="wallet-balance"><b id="wallet-native">—</b><span>Native / gas</span></div>
+        </div>
+        <p class="note" id="payment-wallet-note">Mainnet cüzdan verisi yükleniyor…</p>
+        <h3 style="margin-top:16px">Son gelen zincir işlemleri</h3>
+        <div class="scroll"><table id="t-payment-wallet-transfers"></table></div>
+      </div>
+      <div class="card">
+        <h3>Bekleyen faturalar</h3>
+        <p class="note" style="margin:-5px 0 10px">Manuel onay yalnızca zincirdeki ödemeyi ayrıca kontrol ettiğinde kullanılmalı. Onay aboneliği açar ve faturayı bekleyenlerden kaldırır.</p>
+        <div class="scroll"><table id="t-invoices"></table></div>
+      </div>
+      <div class="card">
+        <h3>Ödeme ve işlem geçmişi</h3>
+        <p class="note" style="margin:-5px 0 10px">“Onaylandı” gerçek ödeme sistemi tarafından doğrulanan işlemdir. “Manuel verildi” zincir doğrulaması olmadan yönetici işlemidir.</p>
+        <div class="scroll"><table id="t-payment-history"></table></div>
+      </div>
+      <div class="card">
+        <h3>Yıldız ödemeleri (charge id)</h3>
+        <div class="scroll"><table id="t-stars"></table></div>
+      </div>
+      <div class="card">
+        <h3>TON imleci</h3>
+        <p class="note" id="ton-note"></p>
+      </div>
+    </section>
+
+    <!-- ============ ARAÇLAR ============ -->
+    <section class="view hidden" id="v-actions">
+      <div class="card">
+        <h3>Test modu (admin yetkisi)</h3>
+        <div class="row">
+          <span id="tm-status" class="pill">…</span>
+          <button class="act" id="tm-toggle" disabled>Değiştir</button>
+        </div>
+        <p class="note">Açıkken kendi hesabın normal bir kullanıcı gibi davranır
+          (abonelik şartı, tek cüzdan kuralı vb. uygulanır) — /testmode ile aynı şey.
+          Yeniden başlatma her zaman admin yetkisini geri verir.</p>
+      </div>
+
+      <div class="card">
+        <h3>Abonelik ver</h3>
+        <div class="row">
+          <input id="g-chat" placeholder="chatId" size="14" />
+          <input id="g-days" placeholder="gün" size="6" />
+          <input id="g-plan" placeholder="plan (standard)" size="14" />
+          <button class="act" id="g-btn">Ver</button>
+          <button class="act" id="g-gift3-btn">🎁 3 gün hediye</button>
+          <span id="g-out" class="note" style="margin:0"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Abonelik kaldır</h3>
+        <div class="row">
+          <input id="r-chat" placeholder="chatId" size="14" />
+          <button class="act danger" id="r-btn">Kaldır</button>
+          <span id="r-out" class="note" style="margin:0"></span>
+        </div>
+        <p class="note">Aboneliği tamamen siler. Abonelikler sekmesindeki
+          “kaldır” butonuyla aynı işi yapar.</p>
+      </div>
+
+      <div class="card">
+        <h3>Bildirim gönder</h3>
+        <div class="row">
+          <input id="n-chat" placeholder="chatId" size="14" />
+        </div>
+        <div class="row" style="margin-top:8px">
+          <textarea id="n-msg" placeholder="Mesaj…" rows="3" style="flex:1;min-width:240px"></textarea>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button class="act" id="n-btn">Gönder</button>
+          <span id="n-out" class="note" style="margin:0"></span>
+        </div>
+        <p class="note">Bot üzerinden düz metin mesaj gönderir. Kullanıcı botu
+          daha önce başlatmış olmalı, aksi halde Telegram reddeder.</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var token = localStorage.getItem('radar_session');
+  var snapshot = null;
+  var paymentWalletSnapshot = null;
+  var paymentWalletLoading = false;
+  var currentView = 'overview';
+
+  var TITLES = {
+    overview:'Özet', users:'Kullanıcılar', subs:'Abonelikler',
+    miners:'Madencilik cüzdanları', radar:'Radar kayıtları',
+    payments:'Ödemeler', actions:'Araçlar'
+  };
+
+  function headers(){
+    return token ? { 'Authorization':'Bearer ' + token, 'Content-Type':'application/json' }
+                 : { 'Content-Type':'application/json' };
+  }
+
+  function esc(v){
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){
+      return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+    });
+  }
+
+  function ago(iso){
+    if (!iso) return '—';
+    var ms = Date.now() - Date.parse(iso);
+    if (!isFinite(ms) || ms < 0) return '—';
+    var m = Math.round(ms/60000);
+    if (m < 60) return m + ' dk';
+    var h = Math.round(m/60);
+    if (h < 48) return h + ' sa';
+    return Math.round(h/24) + ' g';
+  }
+
+  function dt(iso){
+    if (!iso) return '—';
+    var t = Date.parse(iso);
+    return isFinite(t) ? new Date(t).toLocaleString('tr-TR') : '—';
+  }
+
+  function statusPill(s){
+    var cls = s === 'active' ? 'ok' : (s === 'pending_authorization' ? 'warn' : '');
+    return '<span class="pill ' + cls + '">' + esc(s) + '</span>';
+  }
+
+  function paymentIdentity(item){
+    var username = item.telegramUsername ? '@' + item.telegramUsername : 'Telegram adı yok';
+    var name = item.telegramFirstName || 'İsim yok';
+    return '<div class="identity"><span class="primary">' + esc(username) + '</span>'
+      + '<span class="subtle">' + esc(name) + ' · ID ' + esc(item.chatId) + '</span></div>';
+  }
+
+  function paymentWallets(item){
+    var names = Array.isArray(item.walletNames) ? item.walletNames : [];
+    if (!names.length) return '<span class="subtle">Bağlı cüzdan yok</span>';
+    return names.map(function(name){ return '<span class="wallet">' + esc(name) + '</span>'; }).join('<br>');
+  }
+
+  function paymentStatusPill(status){
+    if (status === 'confirmed') return '<span class="pill ok">ONAYLANDI</span>';
+    if (status === 'manual_grant') return '<span class="pill warn">MANUEL VERİLDİ</span>';
+    if (status === 'invoice_deleted') return '<span class="pill bad">FATURA SİLİNDİ</span>';
+    return '<span class="pill">' + esc(status || '—') + '</span>';
+  }
+
+  function table(el, cols, rows, emptyText){
+    if (!rows.length){
+      el.innerHTML = '<tr><td class="empty" colspan="' + cols.length + '">' + esc(emptyText) + '</td></tr>';
+      return;
+    }
+    var head = '<tr>' + cols.map(function(c){ return '<th>' + esc(c) + '</th>'; }).join('') + '</tr>';
+    el.innerHTML = head + rows.join('');
+  }
+
+  function showView(name){
+    currentView = name;
+    document.querySelectorAll('.view').forEach(function(v){ v.classList.add('hidden'); });
+    var target = $('v-' + name);
+    if (target) target.classList.remove('hidden');
+    document.querySelectorAll('.nav').forEach(function(b){
+      b.classList.toggle('on', b.dataset.view === name);
+    });
+    $('view-title').textContent = TITLES[name] || name;
+  }
+
+  document.querySelectorAll('.nav').forEach(function(b){
+    b.addEventListener('click', function(){ showView(b.dataset.view); });
+  });
+
+  /* ---------------- renderers ---------------- */
+
+  function renderTiles(d){
+    var tiles = [
+      ['kullanıcı', d.users.total, 'users'],
+      ['telegram girişi', d.users.telegram, 'users'],
+      ['cüzdan', d.miners.total, 'miners'],
+      ['madencilik yapan', d.miners.byStatus.active || 0, 'miners'],
+      ['onay bekleyen', d.miners.byStatus.pending_authorization || 0, 'miners'],
+      ['aktif abonelik', d.subscriptions.active, 'subs'],
+      ['deneme kullanan', d.subscriptions.trials, 'subs'],
+      ['yıldız ödemesi', d.payments.starsCharges, 'payments'],
+      ['onaylanan ödeme', d.payments.confirmedCount || 0, 'payments'],
+      ['bekleyen fatura', d.payments.pendingInvoices, 'payments'],
+      ['radar kaydı', d.radar.watches, 'radar']
+    ];
+
+    $('tiles').innerHTML = tiles.map(function(t){
+      return '<button class="tile" data-goto="' + t[2] + '">'
+        + '<b>' + esc(t[1]) + '</b>'
+        + '<span>' + esc(t[0]) + '</span>'
+        + '<em>detay →</em>'
+        + '</button>';
+    }).join('');
+
+    $('c-users').textContent  = d.users.total;
+    $('c-subs').textContent   = d.subscriptions.total;
+    $('c-miners').textContent = d.miners.total;
+    $('c-radar').textContent  = d.radar.watches;
+    $('c-pay').textContent    = d.payments.pendingInvoices + (d.payments.historyCount || 0);
+  }
+
+  function renderUsers(d){
+    var q = ($('u-search').value || '').trim().toLowerCase();
+    var list = (d.users.list || []).slice().sort(function(a,b){
+      return Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0);
+    });
+
+    if (q){
+      list = list.filter(function(u){
+        return String(u.telegramId).indexOf(q) !== -1
+          || String(u.username || '').toLowerCase().indexOf(q) !== -1
+          || String(u.firstName || '').toLowerCase().indexOf(q) !== -1;
+      });
+    }
+
+    var rows = list.map(function(u){
+      return '<tr>'
+        + '<td>' + esc(u.telegramId) + '</td>'
+        + '<td>' + esc(u.firstName || '—') + '</td>'
+        + '<td>' + (u.username ? '@' + esc(u.username) : '—') + '</td>'
+        + '<td>' + esc(u.points) + '</td>'
+        + '<td>' + esc(u.referredBy || '—') + '</td>'
+        + '<td>' + esc(dt(u.createdAt)) + '</td>'
+        + '<td><button class="act" data-notify="' + esc(u.telegramId) + '">bildirim</button> '
+        + '<button class="act" data-gift="' + esc(u.telegramId) + '">🎁 3 gün</button></td>'
+        + '</tr>';
+    });
+
+    table($('t-users'), ['telegramId','isim','kullanıcı adı','puan','davet eden','kayıt','işlem'],
+      rows, q ? 'Eşleşen kullanıcı yok.' : 'Kullanıcı yok.');
+  }
+
+  function renderSubs(d){
+    var rows = (d.subscriptions.list || []).slice().sort(function(a,b){
+      return Date.parse(b.activeUntil || 0) - Date.parse(a.activeUntil || 0);
+    }).map(function(s){
+      return '<tr>'
+        + '<td>' + esc(s.chatId) + '</td>'
+        + '<td>' + esc(s.planId) + '</td>'
+        + '<td>' + (s.trial ? 'deneme' : 'ücretli') + '</td>'
+        + '<td>' + esc(dt(s.activeUntil)) + '</td>'
+        + '<td>' + (s.active ? '<span class="pill ok">aktif</span>' : '<span class="pill">bitti</span>') + '</td>'
+        + '<td><button class="act danger" data-rv-chat="' + esc(s.chatId) + '">kaldır</button> '
+        + '<button class="act" data-gift="' + esc(s.chatId) + '">🎁 3 gün</button></td>'
+        + '</tr>';
+    });
+
+    table($('t-subs'), ['chatId','plan','tip','bitiş','durum','işlem'], rows, 'Abonelik yok.');
+
+    var trialRows = (d.payments.trialUsedList || []).map(function(id){
+      return '<tr><td>' + esc(id) + '</td>'
+        + '<td><button class="act" data-notify="' + esc(id) + '">bildirim</button></td></tr>';
+    });
+    table($('t-trials'), ['chatId','işlem'], trialRows, 'Deneme kullanan yok.');
+  }
+
+  function renderMiners(d){
+    var rows = (d.miners.list || []).map(function(m){
+      return '<tr>'
+        + '<td>' + esc(m.chatId) + '</td>'
+        + '<td>' + esc(m.walletName) + '</td>'
+        + '<td>' + statusPill(m.status) + '</td>'
+        + '<td>' + esc(m.lastTapSum == null ? '—' : m.lastTapSum) + '</td>'
+        + '<td>' + esc(ago(m.lastSessionAt)) + '</td>'
+        + '<td>' + esc(ago(m.lastRewardAt)) + '</td>'
+        + '<td>' + esc(dt(m.createdAt)) + '</td>'
+        + '<td>' + (m.lastError ? '<span class="pill bad">' + esc(m.lastError) + '</span>' : '—') + '</td>'
+        + '<td><button class="act danger" data-rm-chat="' + esc(m.chatId) + '" data-rm-wallet="' + esc(m.walletName) + '">sil</button></td>'
+        + '</tr>';
+    });
+
+    table($('t-miners'),
+      ['chatId','cüzdan','durum','tapSum','son oturum','son ödül','eklendi','hata','işlem'],
+      rows, 'Cüzdan yok.');
+  }
+
+  function renderRadar(d){
+    $('radar-note').textContent = 'Toplam ' + d.radar.watches + ' kayıt · '
+      + d.radar.systemWatches + ' tanesi sistem taraması (chatId 0).';
+
+    var rows = (d.radar.list || []).slice().sort(function(a,b){
+      return (b.eventCount || 0) - (a.eventCount || 0);
+    }).map(function(w){
+      return '<tr>'
+        + '<td>' + (w.chatId === 0 ? '<span class="pill">sistem</span>' : esc(w.chatId)) + '</td>'
+        + '<td>' + esc(w.label || '—') + '</td>'
+        + '<td>' + esc(w.eventCount) + '</td>'
+        + '<td>' + esc(ago(w.lastEventAt)) + '</td>'
+        + '<td>' + esc(ago(w.lastCheckedAt)) + '</td>'
+        + '</tr>';
+    });
+
+    table($('t-radar'), ['chatId','cüzdan','olay','son olay','son kontrol'], rows, 'Radar kaydı yok.');
+  }
+
+  function paymentWalletErrorText(code){
+    if (code === 'MAINNET_POOL_BUSY') return 'Mainnet veri havuzu yoğun; son başarılı veri gösteriliyor.';
+    if (code === 'MAINNET_TIMEOUT') return 'Mainnet yanıtı gecikti; son başarılı veri gösteriliyor.';
+    if (code === 'WALLET_NOT_FOUND') return 'Ödeme cüzdanı zincirde çözümlenemedi.';
+    return 'Mainnet cüzdan verisine şu anda ulaşılamıyor.';
+  }
+
+  function walletToken(wallet, symbol){
+    var token = (wallet.tokens || []).find(function(item){ return item.symbol === symbol; });
+    return token ? token.balanceFormatted : '0.00';
+  }
+
+  function renderPaymentWallet(data){
+    paymentWalletSnapshot = data;
+    var status = data && data.status ? data.status : 'unavailable';
+    var statusEl = $('payment-wallet-status');
+    statusEl.textContent = status === 'live' ? 'CANLI' : (status === 'delayed' ? 'GECİKMELİ' : 'ULAŞILAMIYOR');
+    statusEl.className = 'pill ' + (status === 'live' ? 'ok' : (status === 'delayed' ? 'warn' : 'bad'));
+
+    if (!data || !data.wallet){
+      $('payment-wallet-note').textContent = paymentWalletErrorText(data && data.error);
+      table($('t-payment-wallet-transfers'), ['tarih','gönderen cüzdan','tutar','işlem id'], [], 'Zincir verisi alınamadı.');
+      return;
+    }
+
+    var wallet = data.wallet;
+    $('payment-wallet-name').textContent = wallet.name || 'ackinackiradarpayments';
+    $('payment-wallet-address').textContent = wallet.address || '—';
+    $('payment-wallet-address').title = wallet.address || '';
+    $('payment-wallet-copy').disabled = !wallet.address;
+    $('wallet-nackl').textContent = walletToken(wallet, 'NACKL');
+    $('wallet-shell').textContent = walletToken(wallet, 'SHELL');
+    $('wallet-usdc').textContent = walletToken(wallet, 'USDC');
+    $('wallet-native').textContent = wallet.nativeBalanceFormatted || '0.00';
+
+    var note = 'Son zincir güncellemesi: ' + dt(data.fetchedAt || wallet.updatedAt)
+      + ' · LT: ' + (wallet.lastTransactionLt || '—') + ' · otomatik önbellek: 2 dk';
+    if (data.stale) note = paymentWalletErrorText(data.error) + ' ' + note;
+    $('payment-wallet-note').textContent = note;
+
+    var rows = (wallet.incomingTransfers || []).map(function(transfer){
+      var amounts = (transfer.tokens || []).map(function(item){
+        return '<strong>' + esc(item.balanceFormatted) + '</strong> ' + esc(item.symbol);
+      }).join('<br>') || '—';
+      var senderIdentity = transfer.senderWalletName
+        ? '<span class="wallet-name">' + esc(transfer.senderWalletName) + '</span>'
+        : '<span class="wallet-unknown">isim çözülemedi</span>';
+      if (transfer.senderTelegramUsername) {
+        senderIdentity += '<span class="telegram">@' + esc(transfer.senderTelegramUsername) + '</span>';
+      } else if (transfer.senderTelegramFirstName) {
+        senderIdentity += '<span class="telegram">' + esc(transfer.senderTelegramFirstName) + '</span>';
+      }
+      senderIdentity += '<span class="mono-clip" title="' + esc(transfer.src || '') + '">' + esc(transfer.src || '—') + '</span>';
+      return '<tr>'
+        + '<td>' + esc(dt(transfer.createdAt ? new Date(transfer.createdAt * 1000).toISOString() : null)) + '</td>'
+        + '<td class="sender-wallet">' + senderIdentity + '</td>'
+        + '<td>' + amounts + '</td>'
+        + '<td><span class="mono-clip" title="' + esc(transfer.id || '') + '">' + esc(transfer.id || '—') + '</span></td>'
+        + '</tr>';
+    });
+    table($('t-payment-wallet-transfers'), ['tarih','gönderen cüzdan','tutar','işlem id'], rows, 'Gelen token işlemi bulunamadı.');
+  }
+
+  async function loadPaymentWallet(force){
+    if (paymentWalletLoading) return;
+    paymentWalletLoading = true;
+    $('payment-wallet-refresh').disabled = true;
+    if (!paymentWalletSnapshot){
+      $('payment-wallet-status').textContent = 'YÜKLENİYOR';
+      $('payment-wallet-status').className = 'pill';
+    }
+    try {
+      var url = '/api/admin/payment-wallet' + (force ? '?refresh=1' : '');
+      var res = await fetch(url, { headers: headers() });
+      var data = await res.json();
+      renderPaymentWallet(data);
+    } catch (e){
+      renderPaymentWallet({ ok:false, status:'unavailable', error:'MAINNET_UNAVAILABLE' });
+    } finally {
+      paymentWalletLoading = false;
+      $('payment-wallet-refresh').disabled = false;
+    }
+  }
+
+  function renderPayments(d){
+    var invRows = (d.payments.pendingInvoiceList || []).map(function(i){
+      return '<tr>'
+        + '<td>' + paymentIdentity(i) + '</td>'
+        + '<td>' + paymentWallets(i) + '</td>'
+        + '<td>' + esc(i.planId) + '</td>'
+        + '<td>' + esc(i.code || '—') + '</td>'
+        + '<td><strong>' + esc(i.amountFormatted == null ? '—' : i.amountFormatted) + '</strong></td>'
+        + '<td>' + esc(i.currency || '—') + '</td>'
+        + '<td>' + esc(dt(i.createdAt)) + '</td>'
+        + '<td>' + esc(dt(i.expiresAt)) + '</td>'
+        + '<td><div class="pay-actions">'
+        + '<button class="act approve" data-invoice-grant="' + esc(i.id) + '">manuel onayla</button>'
+        + '<button class="act danger" data-invoice-delete="' + esc(i.id) + '">sil</button>'
+        + '</div></td>'
+        + '</tr>';
+    });
+    table($('t-invoices'), ['faturayı oluşturan','bağlı cüzdan','plan','kod','tutar','birim','oluşturma','bitiş','işlem'],
+      invRows, 'Bekleyen fatura yok.');
+
+    var historyRows = (d.payments.historyList || []).map(function(p){
+      var sender = p.senderAddress
+        ? '<span class="mono-clip" title="' + esc(p.senderAddress) + '">' + esc(p.senderAddress) + '</span>'
+        : '<span class="subtle">adres kaydı yok</span>';
+      var tx = p.transactionId
+        ? '<span class="mono-clip" title="' + esc(p.transactionId) + '">' + esc(p.transactionId) + '</span>'
+        : '—';
+      return '<tr>'
+        + '<td>' + paymentStatusPill(p.status) + '</td>'
+        + '<td>' + esc(dt(p.recordedAt)) + '</td>'
+        + '<td>' + paymentIdentity(p) + '</td>'
+        + '<td>' + paymentWallets(p) + '</td>'
+        + '<td>' + sender + '</td>'
+        + '<td>' + esc(p.planId || '—') + '</td>'
+        + '<td><strong>' + esc(p.amountFormatted || '—') + '</strong> ' + esc(p.currency || '') + '</td>'
+        + '<td>' + esc(p.source || '—') + '</td>'
+        + '<td>' + tx + '</td>'
+        + '<td>' + esc(dt(p.activeUntil)) + '</td>'
+        + '<td>' + esc(p.note || '—') + '</td>'
+        + '</tr>';
+    });
+    table($('t-payment-history'), ['durum','tarih','faturayı oluşturan','bağlı cüzdan','gerçek gönderen adres','plan','tutar','kaynak','işlem id','abonelik bitişi','not'],
+      historyRows, 'Henüz ödeme geçmişi yok. Yeni onaylanan ödemeler burada görünecek.');
+
+    $('p-pending').textContent = d.payments.pendingInvoices || 0;
+    $('p-confirmed').textContent = d.payments.confirmedCount || 0;
+    $('p-history').textContent = d.payments.historyCount || 0;
+
+    var starRows = (d.payments.starsChargeList || []).slice().reverse().map(function(c){
+      return '<tr><td>' + esc(c) + '</td></tr>';
+    });
+    table($('t-stars'), ['charge id'], starRows, 'Yıldız ödemesi yok.');
+
+    $('ton-note').textContent = 'Son işlenen TON logical time: ' + (d.payments.tonLastLt || 0);
+  }
+
+  function renderAll(d){
+    snapshot = d;
+    renderTiles(d);
+    renderUsers(d);
+    renderSubs(d);
+    renderMiners(d);
+    renderRadar(d);
+    renderPayments(d);
+    $('stamp').textContent = 'Güncellendi: ' + new Date(d.updatedAt).toLocaleString('tr-TR');
+  }
+
+  /* ---------------- data ---------------- */
+
+  async function load(){
+    try {
+      var res = await fetch('/api/admin/overview', { headers: headers() });
+
+      if (!res.ok){
+        // 401 = not signed in, 404 = signed in but not an admin. Both land on
+        // the same gate; the page never says which.
+        $('gate').classList.remove('hidden');
+        $('app').classList.add('hidden');
+        return;
+      }
+
+      var data = await res.json();
+      $('gate').classList.add('hidden');
+      $('app').classList.remove('hidden');
+      renderAll(data);
+      await loadTestMode();
+      void loadPaymentWallet(false);
+    } catch (e){
+      $('stamp').textContent = 'Bağlantı hatası.';
+    }
+  }
+
+  function renderTestMode(active){
+    $('tm-status').textContent = active ? 'AÇIK — normal kullanıcı gibisin' : 'kapalı — admin yetkisi tam';
+    $('tm-status').className = 'pill ' + (active ? 'warn' : 'ok');
+    $('tm-toggle').textContent = active ? 'Kapat' : 'Aç';
+    $('tm-toggle').disabled = false;
+    $('tm-toggle').dataset.active = active ? '1' : '0';
+  }
+
+  async function loadTestMode(){
+    try {
+      var res = await fetch('/api/admin/testmode', { headers: headers() });
+      if (!res.ok) return;
+      var data = await res.json();
+      renderTestMode(!!data.active);
+    } catch (e){}
+  }
+
+  /* ---------------- actions ---------------- */
+
+  async function grant(chatId, days, planId, out){
+    if (!chatId || !days){ if (out) out.textContent = 'chatId ve gün gerekli.'; return; }
+    if (out) out.textContent = '…';
+    try {
+      var res = await fetch('/api/admin/subscription/grant', {
+        method:'POST', headers: headers(),
+        body: JSON.stringify({ chatId: chatId, days: days, planId: planId })
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      if (out) out.textContent = 'Verildi: ' + new Date(data.activeUntil).toLocaleString('tr-TR');
+      await load();
+    } catch (e){
+      if (out) out.textContent = 'Hata: ' + e.message;
+      else alert('Hata: ' + e.message);
+    }
+  }
+
+  async function revoke(chatId, out){
+    if (!chatId){ if (out) out.textContent = 'chatId gerekli.'; return; }
+    if (out) out.textContent = '…';
+    try {
+      var res = await fetch('/api/admin/subscription/revoke', {
+        method:'POST', headers: headers(),
+        body: JSON.stringify({ chatId: chatId })
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      if (out) out.textContent = data.revoked ? 'Kaldırıldı.' : 'Zaten aboneliği yoktu.';
+      await load();
+    } catch (e){
+      if (out) out.textContent = 'Hata: ' + e.message;
+      else alert('Hata: ' + e.message);
+    }
+  }
+
+  document.addEventListener('click', async function(ev){
+    var goto = ev.target.closest('[data-goto]');
+    if (goto){ showView(goto.dataset.goto); return; }
+
+    var invoiceGrantBtn = ev.target.closest('[data-invoice-grant]');
+    if (invoiceGrantBtn){
+      var grantInvoiceId = invoiceGrantBtn.getAttribute('data-invoice-grant');
+      var grantInvoice = snapshot && (snapshot.payments.pendingInvoiceList || []).find(function(i){ return i.id === grantInvoiceId; });
+      var grantLabel = grantInvoice
+        ? ((grantInvoice.telegramUsername ? '@' + grantInvoice.telegramUsername : 'ID ' + grantInvoice.chatId) + ' · ' + grantInvoice.planId)
+        : grantInvoiceId;
+      if (!confirm(grantLabel + ' faturası manuel onaylansın mı?\n\nBu işlem ödeme zincirde doğrulanmadan aboneliği açar ve denetim geçmişine MANUEL olarak kaydolur.')) return;
+      invoiceGrantBtn.disabled = true;
+      try {
+        var grantRes = await fetch('/api/admin/payment/invoice/grant', {
+          method:'POST', headers: headers(), body: JSON.stringify({ invoiceId: grantInvoiceId })
+        });
+        var grantData = await grantRes.json();
+        if (!grantRes.ok || !grantData.ok) throw new Error(grantData.error || ('HTTP ' + grantRes.status));
+        alert('Abonelik manuel olarak verildi. Bitiş: ' + new Date(grantData.activeUntil).toLocaleString('tr-TR'));
+        await load();
+      } catch (e){
+        alert('Manuel onay başarısız: ' + e.message);
+        invoiceGrantBtn.disabled = false;
+      }
+      return;
+    }
+
+    var invoiceDeleteBtn = ev.target.closest('[data-invoice-delete]');
+    if (invoiceDeleteBtn){
+      var deleteInvoiceId = invoiceDeleteBtn.getAttribute('data-invoice-delete');
+      var deleteInvoice = snapshot && (snapshot.payments.pendingInvoiceList || []).find(function(i){ return i.id === deleteInvoiceId; });
+      var deleteLabel = deleteInvoice
+        ? ((deleteInvoice.telegramUsername ? '@' + deleteInvoice.telegramUsername : 'ID ' + deleteInvoice.chatId) + ' · ' + deleteInvoice.planId)
+        : deleteInvoiceId;
+      if (!confirm(deleteLabel + ' bekleyen faturası silinsin mi?\n\nAbonelik verilmez; silme işlemi geçmişte kayıtlı kalır.')) return;
+      invoiceDeleteBtn.disabled = true;
+      try {
+        var deleteRes = await fetch('/api/admin/payment/invoice/delete', {
+          method:'POST', headers: headers(), body: JSON.stringify({ invoiceId: deleteInvoiceId })
+        });
+        var deleteData = await deleteRes.json();
+        if (!deleteRes.ok || !deleteData.ok) throw new Error(deleteData.error || ('HTTP ' + deleteRes.status));
+        await load();
+      } catch (e){
+        alert('Fatura silinemedi: ' + e.message);
+        invoiceDeleteBtn.disabled = false;
+      }
+      return;
+    }
+
+    var rmBtn = ev.target.closest('[data-rm-wallet]');
+    if (rmBtn){
+      var chatId = rmBtn.getAttribute('data-rm-chat');
+      var wallet = rmBtn.getAttribute('data-rm-wallet');
+      if (!confirm(wallet + ' (' + chatId + ') silinsin mi?\n\nMadencilik durur ve saklanan anahtarlar silinir.')) return;
+      rmBtn.disabled = true;
+      try {
+        var res = await fetch('/api/admin/miner/remove', {
+          method:'POST', headers: headers(),
+          body: JSON.stringify({ chatId: Number(chatId), walletName: wallet })
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        await load();
+      } catch (e){
+        alert('Silinemedi: ' + e.message);
+        rmBtn.disabled = false;
+      }
+      return;
+    }
+
+    var rvBtn = ev.target.closest('[data-rv-chat]');
+    if (rvBtn){
+      var rvChat = rvBtn.getAttribute('data-rv-chat');
+      if (!confirm(rvChat + ' aboneliği kaldırılsın mı?')) return;
+      rvBtn.disabled = true;
+      await revoke(Number(rvChat), null);
+      return;
+    }
+
+    var giftBtn = ev.target.closest('[data-gift]');
+    if (giftBtn){
+      var giftId = giftBtn.getAttribute('data-gift');
+      if (!confirm(giftId + ' hesabına 3 gün hediye abonelik verilsin mi?')) return;
+      giftBtn.disabled = true;
+      await grant(Number(giftId), 3, 'gift', null);
+      return;
+    }
+
+    var notifyBtn = ev.target.closest('[data-notify]');
+    if (notifyBtn){
+      showView('actions');
+      $('n-chat').value = notifyBtn.getAttribute('data-notify');
+      $('n-msg').focus();
+    }
+  });
+
+  $('u-search').addEventListener('input', function(){
+    if (snapshot) renderUsers(snapshot);
+  });
+
+  $('tm-toggle').addEventListener('click', async function(){
+    var next = $('tm-toggle').dataset.active !== '1';
+    $('tm-toggle').disabled = true;
+    try {
+      var res = await fetch('/api/admin/testmode', {
+        method:'POST', headers: headers(),
+        body: JSON.stringify({ on: next })
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok) throw new Error('HTTP ' + res.status);
+      renderTestMode(!!data.active);
+    } catch (e){
+      alert('Değiştirilemedi: ' + e.message);
+      $('tm-toggle').disabled = false;
+    }
+  });
+
+  $('g-btn').addEventListener('click', function(){
+    grant(Number($('g-chat').value.trim()), Number($('g-days').value.trim()),
+      $('g-plan').value.trim() || 'standard', $('g-out'));
+  });
+
+  $('g-gift3-btn').addEventListener('click', function(){
+    var id = Number($('g-chat').value.trim());
+    if (!id){ $('g-out').textContent = 'Önce chatId gir.'; return; }
+    grant(id, 3, 'gift', $('g-out'));
+  });
+
+  $('r-btn').addEventListener('click', function(){
+    var id = Number($('r-chat').value.trim());
+    if (!id){ $('r-out').textContent = 'chatId gerekli.'; return; }
+    if (!confirm(id + ' aboneliği kaldırılsın mı?')) return;
+    revoke(id, $('r-out'));
+  });
+
+  $('n-btn').addEventListener('click', async function(){
+    var chatId = Number($('n-chat').value.trim());
+    var message = $('n-msg').value.trim();
+    if (!chatId || !message){ $('n-out').textContent = 'chatId ve mesaj gerekli.'; return; }
+
+    $('n-btn').disabled = true;
+    $('n-out').textContent = '…';
+    try {
+      var res = await fetch('/api/admin/notify', {
+        method:'POST', headers: headers(),
+        body: JSON.stringify({ chatId: chatId, message: message })
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.detail || data.error || ('HTTP ' + res.status));
+      $('n-out').textContent = 'Gönderildi.';
+      $('n-msg').value = '';
+    } catch (e){
+      $('n-out').textContent = 'Hata: ' + e.message;
+    } finally {
+      $('n-btn').disabled = false;
+    }
+  });
+
+  $('payment-wallet-refresh').addEventListener('click', function(){
+    loadPaymentWallet(true);
+  });
+
+  $('payment-wallet-copy').addEventListener('click', async function(){
+    var address = $('payment-wallet-address').textContent || '';
+    if (!address || address === '—') return;
+    try {
+      await navigator.clipboard.writeText(address);
+      $('payment-wallet-copy').textContent = 'kopyalandı';
+      setTimeout(function(){ $('payment-wallet-copy').textContent = 'kopyala'; }, 1200);
+    } catch (e){
+      alert('Adres kopyalanamadı.');
+    }
+  });
+
+  load();
+  setInterval(load, 30000);
+})();
+</script>
+</body>
+</html>

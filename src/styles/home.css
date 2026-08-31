@@ -1,0 +1,3318 @@
+.home-command-view {
+  --hud-cyan: #00e5ff;
+  --hud-cyan-soft: rgba(0,229,255,.18);
+  --hud-green: #9dff6b;
+  --hud-green-soft: rgba(157,255,107,.14);
+  --hud-panel: rgba(7,11,18,.88);
+
+  display: grid;
+  gap: 10px;
+}
+
+.home-command-grid {
+  display: grid;
+
+  grid-template-columns:
+    minmax(230px, .82fr)
+    minmax(480px, 1.7fr)
+    minmax(230px, .82fr);
+
+  gap: 9px;
+}
+
+
+.home-metric-rail {
+  min-width: 0;
+
+  display: grid;
+
+  grid-template-rows:
+    48px
+    repeat(3, minmax(126px, 1fr));
+
+  border:
+    1px solid
+    rgba(0,229,255,.13);
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(8,13,21,.78),
+      rgba(4,8,13,.66)
+    );
+}
+
+
+.rail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+
+  border-bottom:
+    1px solid
+    rgba(0,229,255,.12);
+
+  color: #8595a5;
+
+  font:
+    600 11px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing: .13em;
+}
+
+.rail-heading i {
+  width: 5px;
+  height: 5px;
+
+  border-radius: 50%;
+
+  background: var(--hud-green);
+
+  box-shadow:
+    0 0 9px
+    rgba(157,255,107,.52);
+}
+
+
+.home-metric {
+  position: relative;
+
+  min-width: 0;
+
+  display: grid;
+
+  grid-template-columns:
+    72px minmax(0,1fr);
+
+  align-items: center;
+
+  gap: 12px;
+
+  padding: 15px 16px;
+
+  border-bottom:
+    1px solid
+    rgba(0,229,255,.085);
+
+  background:
+    linear-gradient(
+      110deg,
+      rgba(0,229,255,.025),
+      transparent 60%
+    );
+
+  transition:
+    background .2s ease,
+    border-color .2s ease;
+}
+
+.home-metric:last-child {
+  border-bottom: 0;
+}
+
+.home-metric:hover {
+  background:
+    linear-gradient(
+      110deg,
+      rgba(0,229,255,.055),
+      transparent 72%
+    );
+}
+
+.home-metric::after {
+  content: "";
+
+  position: absolute;
+
+  left: 42%;
+  right: 13px;
+  bottom: 14px;
+
+  height: 1px;
+
+  opacity: .7;
+
+  background:
+    linear-gradient(
+      90deg,
+      rgba(157,255,107,.3),
+      transparent
+    );
+}
+
+
+.metric-symbol {
+  position: relative;
+
+  width: 62px;
+  height: 62px;
+
+  display: grid;
+  place-items: center;
+
+  border:
+    1px solid
+    rgba(157,255,107,.2);
+
+  border-radius: 50%;
+
+  color: var(--hud-green);
+
+  background:
+    radial-gradient(
+      circle,
+      rgba(157,255,107,.075),
+      rgba(157,255,107,.01)
+    );
+}
+
+.metric-symbol::after {
+  content: "";
+
+  position: absolute;
+
+  inset: 6px;
+
+  border:
+    1px dashed
+    rgba(0,229,255,.13);
+
+  border-radius: 50%;
+}
+
+.metric-symbol svg {
+  width: 29px;
+  height: 29px;
+
+  fill: none;
+
+  stroke: currentColor;
+  stroke-width: 1.45;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.text-symbol {
+  font:
+    700 10px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing: .05em;
+}
+
+
+.home-metric span {
+  display: block;
+
+  color: #718094;
+
+  font-size: 11px;
+  line-height: 1.35;
+
+  text-transform: uppercase;
+
+  letter-spacing: .08em;
+}
+
+.home-metric b {
+  display: block;
+
+  max-width: 100%;
+
+  margin-top: 7px;
+
+  overflow: hidden;
+
+  color: var(--hud-green);
+
+  text-overflow: ellipsis;
+
+  font:
+    700 clamp(19px,1.7vw,28px)
+    "JetBrains Mono",
+    monospace;
+
+  line-height: 1.05;
+
+  white-space: nowrap;
+
+  text-shadow:
+    0 0 18px
+    rgba(157,255,107,.13);
+}
+
+.home-metric small {
+  display: block;
+
+  margin-top: 7px;
+
+  color: #4f5d6b;
+
+  font:
+    10px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing: .05em;
+}
+
+
+.home-radar-stage {
+  position: relative;
+
+  min-height: 516px;
+
+  overflow: hidden;
+
+  isolation: isolate;
+
+  border:
+    1px solid
+    rgba(0,229,255,.21);
+
+  background:
+    radial-gradient(
+      circle at 50% 58%,
+      rgba(157,255,107,.12),
+      transparent 31%
+    ),
+    radial-gradient(
+      circle at 50% 55%,
+      rgba(0,229,255,.065),
+      transparent 56%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(8,13,21,.98),
+      rgba(3,6,10,.99)
+    );
+
+  box-shadow:
+    0 28px 70px
+    rgba(0,0,0,.35);
+}
+
+.home-radar-stage::before {
+  content: "";
+
+  position: absolute;
+
+  inset: 0;
+
+  z-index: 0;
+
+  opacity: .28;
+
+  pointer-events: none;
+
+  background-image:
+    linear-gradient(
+      rgba(105,159,61,.08)
+      1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      rgba(105,159,61,.08)
+      1px,
+      transparent 1px
+    );
+
+  background-size:
+    38px 38px;
+
+  mask-image:
+    radial-gradient(
+      circle at 50% 58%,
+      black,
+      transparent 76%
+    );
+}
+
+
+.radar-stage-head {
+  position: absolute;
+
+  z-index: 6;
+
+  top: 20px;
+  left: 22px;
+  right: 22px;
+
+  display: flex;
+
+  align-items: flex-start;
+  justify-content: space-between;
+
+  gap: 20px;
+
+  pointer-events: none;
+}
+
+.radar-stage-head > div:first-child > span {
+  color: #4fd1e0;
+
+  font:
+    600 10px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing: .18em;
+}
+
+.radar-stage-head h1 {
+  margin:
+    7px 0 0;
+
+  font:
+    700 clamp(20px,2.3vw,32px)
+    "Chakra Petch",
+    system-ui,
+    sans-serif;
+
+  letter-spacing: -.035em;
+}
+
+
+.chain-status {
+  display: flex;
+  align-items: center;
+
+  gap: 7px;
+
+  color: var(--hud-green);
+
+  font:
+    600 10px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing: .11em;
+
+  white-space: nowrap;
+}
+
+.chain-status i {
+  width: 6px;
+  height: 6px;
+
+  border-radius: 50%;
+
+  background:
+    currentColor;
+
+  box-shadow:
+    0 0 9px
+    currentColor;
+}
+
+.chain-status.stale {
+  color: #e2c96c;
+}
+
+.chain-status.offline {
+  color: #ff796f;
+}
+
+
+.network-observatory {
+  position: absolute;
+
+  z-index: 1;
+
+  inset:
+    66px 0 0;
+}
+
+#home-network-canvas {
+  position: absolute;
+
+  inset: 0;
+
+  display: block;
+
+  width: 100%;
+  height: 100%;
+}
+
+
+.radar-hud-ring {
+  position: absolute;
+
+  z-index: 2;
+
+  left: 50%;
+  top: 58%;
+
+  width:
+    min(68%,430px);
+
+  aspect-ratio: 1;
+
+  transform:
+    translate(-50%,-50%);
+
+  border:
+    1px solid
+    rgba(185,255,59,.24);
+
+  border-radius: 50%;
+
+  pointer-events: none;
+}
+
+.ring-b {
+  width:
+    min(52%,330px);
+
+  opacity: .55;
+
+  transform:
+    translate(-50%,-50%)
+    rotateX(64deg);
+}
+
+.ring-c {
+  width:
+    min(78%,500px);
+
+  opacity: .36;
+
+  transform:
+    translate(-50%,-50%)
+    rotateX(68deg)
+    rotateZ(-12deg);
+}
+
+
+.radar-scan-sweep {
+  position: absolute;
+
+  z-index: 2;
+
+  left: 50%;
+  top: 58%;
+
+  width:
+    min(72%,455px);
+
+  aspect-ratio: 1;
+
+  transform:
+    translate(-50%,-50%);
+
+  border-radius: 50%;
+
+  opacity: .6;
+
+  mix-blend-mode: screen;
+
+  pointer-events: none;
+
+  background:
+    conic-gradient(
+      from -14deg,
+      rgba(185,255,59,.30),
+      rgba(185,255,59,.02) 17deg,
+      transparent 56deg
+    );
+
+  animation:
+    radarSweep 6.8s
+    linear infinite;
+}
+
+
+.radar-center-logo {
+  position: absolute;
+
+  z-index: 4;
+
+  left: 50%;
+  top: 58%;
+
+  width: 60px;
+  height: 60px;
+
+  padding: 7px;
+
+  transform:
+    translate(-50%,-50%);
+
+  border:
+    1px solid
+    rgba(0,229,255,.34);
+
+  border-radius: 11px;
+
+  background:
+    radial-gradient(
+      circle,
+      rgba(157,255,107,.13),
+      rgba(4,9,4,.94) 68%
+    );
+
+  box-shadow:
+    0 0 0 8px
+    rgba(157,255,107,.025),
+    0 0 32px
+    rgba(157,255,107,.16),
+    0 14px 35px
+    rgba(0,0,0,.5);
+}
+
+.radar-center-logo img {
+  width: 100%;
+  height: 100%;
+
+  display: block;
+
+  object-fit: cover;
+
+  border-radius: 8px;
+}
+
+
+.radar-coordinate {
+  position: absolute;
+
+  z-index: 5;
+
+  bottom: 17px;
+
+  color: #566477;
+
+  font:
+    10px
+    "JetBrains Mono",
+    monospace;
+
+  line-height: 1.7;
+
+  letter-spacing: .1em;
+
+  pointer-events: none;
+}
+
+.radar-coordinate b {
+  color:
+    rgba(130,249,255,.84);
+}
+
+.radar-coordinate.left {
+  left: 18px;
+}
+
+.radar-coordinate.right {
+  right: 18px;
+
+  text-align: right;
+}
+
+
+.home-lower-grid {
+  display: grid;
+
+  grid-template-columns:
+    minmax(0,1.7fr)
+    minmax(310px,.8fr);
+
+  gap: 9px;
+}
+
+
+.home-spark-card,
+.cloud-entry-card {
+  min-height: 180px;
+
+  border:
+    1px solid
+    rgba(0,229,255,.13);
+
+  background:
+    linear-gradient(
+      145deg,
+      rgba(7,12,19,.92),
+      rgba(4,8,13,.9)
+    );
+}
+
+
+.home-spark-card {
+  padding: 17px 19px;
+}
+
+.spark-head {
+  min-height: 25px;
+
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+
+  gap: 12px;
+
+  color: #687789;
+
+  font:
+    11px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing: .12em;
+}
+
+.spark-summary {
+  display: flex;
+
+  gap: 14px;
+
+  flex-wrap: wrap;
+}
+
+.spark-summary span {
+  color: #566575;
+}
+
+.spark-summary b {
+  color: var(--hud-green);
+}
+
+
+.spark-chart {
+  height: 112px;
+
+  margin-top: 9px;
+}
+
+.spark-chart svg {
+  display: block;
+
+  width: 100%;
+  height: 100%;
+
+  overflow: visible;
+}
+
+.spark-waiting {
+  height: 100%;
+
+  display: grid;
+  place-items: center;
+
+  color: #4d5b69;
+
+  font:
+    11px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing: .1em;
+}
+
+
+.cloud-entry-card {
+  display: grid;
+
+  grid-template-columns:
+    110px minmax(0,1fr);
+
+  align-items: center;
+
+  gap: 16px;
+
+  padding: 19px;
+}
+
+.cloud-entry-icon {
+  min-height: 132px;
+
+  display: grid;
+  place-items: center;
+
+  border-right:
+    1px solid
+    rgba(0,229,255,.1);
+}
+
+.cloud-entry-icon svg {
+  width: 70px;
+
+  fill: none;
+
+  stroke: var(--hud-green);
+
+  stroke-width: 2;
+
+  opacity: .75;
+}
+
+.cloud-entry-copy > span {
+  color: #50d4e4;
+
+  font:
+    600 10px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing: .15em;
+}
+
+.cloud-entry-copy h2 {
+  margin:
+    7px 0 7px;
+
+  font:
+    700 21px
+    "Chakra Petch",
+    system-ui,
+    sans-serif;
+}
+
+.cloud-entry-copy p {
+  margin: 0;
+
+  color: #6c7a87;
+
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.cloud-entry-copy a {
+  margin-top: 14px;
+
+  width: max-content;
+
+  display: inline-flex;
+  align-items: center;
+
+  gap: 12px;
+
+  color: var(--hud-green);
+
+  text-decoration: none;
+
+  font:
+    600 11px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing: .08em;
+}
+
+
+.home-activity {
+  min-height: 82px;
+
+  display: flex;
+
+  overflow-x: auto;
+
+  border:
+    1px solid
+    rgba(0,229,255,.13);
+
+  background:
+    rgba(4,8,13,.9);
+}
+
+.activity-live {
+  min-width: 155px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  gap: 8px;
+
+  padding: 0 16px;
+
+  color: var(--hud-green);
+
+  border-right:
+    1px solid
+    rgba(0,229,255,.1);
+
+  font:
+    600 10px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing: .12em;
+}
+
+.activity-live i {
+  width: 6px;
+  height: 6px;
+
+  border-radius: 50%;
+
+  background: var(--hud-green);
+
+  box-shadow:
+    0 0 10px
+    rgba(157,255,107,.7);
+}
+
+
+.activity-cell {
+  min-width: 150px;
+
+  flex: 1;
+
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+
+  padding: 13px 17px;
+
+  border-right:
+    1px solid
+    rgba(0,229,255,.08);
+}
+
+.activity-cell:last-child {
+  border-right: 0;
+}
+
+.activity-cell span {
+  color: #536271;
+
+  font:
+    10px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing: .07em;
+}
+
+.activity-cell b {
+  margin-top: 7px;
+
+  color: #c5d1d6;
+
+  font:
+    600 11px
+    "JetBrains Mono",
+    monospace;
+
+  white-space: nowrap;
+}
+
+.activity-cell small {
+  margin-top: 4px;
+
+  color: #36434d;
+
+  font:
+    9px
+    "JetBrains Mono",
+    monospace;
+}
+
+
+@keyframes radarSweep {
+  to {
+    transform:
+      translate(-50%,-50%)
+      rotate(360deg);
+  }
+}
+
+
+@media (
+  prefers-reduced-motion:
+  reduce
+) {
+  .radar-scan-sweep {
+    animation: none;
+  }
+}
+
+
+@media (max-width: 1120px) {
+  .home-command-grid {
+    grid-template-columns:
+      minmax(200px,.7fr)
+      minmax(420px,1.5fr)
+      minmax(200px,.7fr);
+  }
+
+  .home-metric {
+    grid-template-columns:
+      58px minmax(0,1fr);
+
+    padding:
+      13px 11px;
+  }
+
+  .metric-symbol {
+    width: 52px;
+    height: 52px;
+  }
+}
+
+
+@media (max-width: 900px) {
+  .home-command-grid {
+    grid-template-columns:
+      1fr 1fr;
+
+    grid-template-areas:
+      "radar radar"
+      "left right";
+  }
+
+  .home-radar-stage {
+    grid-area: radar;
+
+    min-height:
+      480px;
+  }
+
+  .home-metric-rail:first-child {
+    grid-area: left;
+  }
+
+  .home-metric-rail:last-child {
+    grid-area: right;
+  }
+
+  .home-lower-grid {
+    grid-template-columns:
+      1fr;
+  }
+}
+
+
+@media (max-width: 640px) {
+  .home-command-grid {
+    grid-template-columns:
+      1fr;
+
+    grid-template-areas:
+      "radar"
+      "left"
+      "right";
+  }
+
+  .home-radar-stage {
+    min-height:
+      370px;
+  }
+
+  .radar-stage-head h1 {
+    font-size: 21px;
+  }
+
+  .chain-status {
+    display: none;
+  }
+
+  .radar-coordinate {
+    display: none;
+  }
+
+  .home-metric-rail {
+    grid-template-rows:
+      44px
+      repeat(
+        3,
+        minmax(92px,auto)
+      );
+  }
+
+  .home-metric {
+    min-height: 92px;
+  }
+
+  .cloud-entry-card {
+    grid-template-columns:
+      1fr;
+
+    text-align: center;
+  }
+
+  .cloud-entry-icon {
+    min-height: 80px;
+
+    border-right: 0;
+
+    border-bottom:
+      1px solid
+      rgba(0,229,255,.1);
+  }
+
+  .cloud-entry-copy a {
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .spark-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .spark-chart {
+    height: 92px;
+  }
+}
+
+
+/* ==================================================
+   PHASE_7B_RADAR_RECOVERY_20260816
+   Restore the wider old radar composition.
+   ================================================== */
+
+@media (min-width: 1121px) {
+
+  .home-command-grid {
+    grid-template-columns:
+      minmax(210px,230px)
+      minmax(560px,1fr)
+      minmax(210px,230px);
+
+    gap: 13px;
+  }
+
+
+  .home-radar-stage {
+    min-height: 520px;
+  }
+}
+
+
+@media (
+  min-width: 901px
+) and (
+  max-width: 1120px
+) {
+
+  .home-command-grid {
+    grid-template-columns:
+      minmax(175px,205px)
+      minmax(360px,1fr)
+      minmax(175px,205px);
+
+    gap: 11px;
+  }
+}
+
+
+/*
+ * The old geometry used a slightly smaller sphere
+ * positioned higher in the stage. The canvas code
+ * is restored to radius .29/.35/175 + centerY .52.
+ */
+
+
+/* ==================================================
+   PHASE_7C_VISUAL_20260816
+   True optical center + readable metadata
+   ================================================== */
+
+
+/*
+ * The stage header occupies ~66px.
+ * Canvas center .45 + this 52% CSS center puts
+ * canvas, rings, sweep and logo on one visual axis.
+ */
+
+.home-radar-stage {
+  background:
+    radial-gradient(
+      circle at 50% 52%,
+      rgba(157,255,107,.11),
+      transparent 30%
+    ),
+    radial-gradient(
+      circle at 50% 52%,
+      rgba(0,229,255,.06),
+      transparent 54%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(8,13,21,.98),
+      rgba(3,6,10,.99)
+    );
+}
+
+
+.home-radar-stage::before {
+  -webkit-mask-image:
+    radial-gradient(
+      circle at 50% 52%,
+      black,
+      transparent 75%
+    );
+
+  mask-image:
+    radial-gradient(
+      circle at 50% 52%,
+      black,
+      transparent 75%
+    );
+}
+
+
+.radar-hud-ring,
+.radar-scan-sweep,
+.radar-center-logo {
+  top: 52% !important;
+}
+
+
+/*
+ * Keep every decorative orbit fully inside the stage.
+ * We keep the orbit aesthetic instead of deleting it.
+ */
+
+.radar-hud-ring {
+  width:
+    min(
+      64%,
+      410px
+    );
+}
+
+
+.ring-b {
+  width:
+    min(
+      47%,
+      300px
+    );
+}
+
+
+.ring-c {
+  width:
+    min(
+      70%,
+      445px
+    );
+}
+
+
+.radar-scan-sweep {
+  width:
+    min(
+      66%,
+      420px
+    );
+}
+
+
+/* ---------- HOME READABILITY ---------- */
+
+.rail-heading {
+  font-size:
+    11px !important;
+
+  letter-spacing:
+    .105em;
+}
+
+
+.home-metric > div > span {
+  font-size:
+    12px !important;
+
+  line-height:
+    1.4;
+
+  letter-spacing:
+    .055em;
+}
+
+
+.home-metric > div > small {
+  font-size:
+    10.5px !important;
+
+  line-height:
+    1.4;
+
+  letter-spacing:
+    .045em;
+}
+
+
+.radar-stage-head
+> div:first-child
+> span {
+  font-size:
+    10px !important;
+}
+
+
+.chain-status {
+  font-size:
+    10.5px !important;
+}
+
+
+.radar-coordinate {
+  font-size:
+    10px !important;
+
+  line-height:
+    1.8;
+}
+
+
+.spark-head {
+  font-size:
+    11px !important;
+}
+
+
+.spark-waiting {
+  font-size:
+    11px !important;
+}
+
+
+.cloud-entry-copy > span {
+  font-size:
+    10px !important;
+}
+
+
+.cloud-entry-copy p {
+  font-size:
+    12.5px !important;
+
+  line-height:
+    1.6;
+}
+
+
+.cloud-entry-copy a {
+  font-size:
+    11px !important;
+}
+
+
+.activity-live {
+  font-size:
+    10px !important;
+}
+
+
+.activity-cell span {
+  font-size:
+    10px !important;
+}
+
+
+.activity-cell b {
+  font-size:
+    12px !important;
+}
+
+
+.activity-cell small {
+  font-size:
+    9.5px !important;
+}
+
+
+@media (max-width: 640px) {
+
+  .radar-hud-ring,
+  .radar-scan-sweep,
+  .radar-center-logo {
+    top: 54% !important;
+  }
+
+
+  .radar-hud-ring {
+    width:
+      min(
+        75%,
+        330px
+      );
+  }
+
+
+  .ring-c {
+    width:
+      min(
+        86%,
+        365px
+      );
+  }
+
+
+  .radar-scan-sweep {
+    width:
+      min(
+        79%,
+        345px
+      );
+  }
+}
+
+
+/* ==================================================
+   PHASE_7C_CENTER_FIX_20260816
+   Observatory starts 66px below stage top.
+   42.7% of observatory aligns with stage true center.
+   ================================================== */
+
+.home-radar-stage {
+  background:
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(157,255,107,.11),
+      transparent 30%
+    ),
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(0,229,255,.06),
+      transparent 54%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(8,13,21,.98),
+      rgba(3,6,10,.99)
+    );
+}
+
+
+.home-radar-stage::before {
+  -webkit-mask-image:
+    radial-gradient(
+      circle at 50% 50%,
+      black,
+      transparent 75%
+    );
+
+  mask-image:
+    radial-gradient(
+      circle at 50% 50%,
+      black,
+      transparent 75%
+    );
+}
+
+
+.radar-hud-ring,
+.radar-scan-sweep,
+.radar-center-logo {
+  top:
+    42.7% !important;
+}
+
+
+/*
+ * The two perspective ellipses were being clipped
+ * and add visual noise. Keep only the clean main ring.
+ */
+
+.radar-hud-ring.ring-b,
+.radar-hud-ring.ring-c {
+  display:
+    none !important;
+}
+
+
+.radar-hud-ring.ring-a {
+  display: block;
+
+  width:
+    min(
+      60%,
+      400px
+    );
+}
+
+
+.radar-scan-sweep {
+  width:
+    min(
+      61%,
+      405px
+    );
+}
+
+
+/*
+ * Center logo and canvas use the same 42.7% axis.
+ */
+
+.radar-center-logo {
+  width: 62px;
+  height: 62px;
+}
+
+
+@media (max-width: 640px) {
+
+  .radar-hud-ring,
+  .radar-scan-sweep,
+  .radar-center-logo {
+    top:
+      44% !important;
+  }
+
+
+  .radar-hud-ring.ring-a {
+    width:
+      min(
+        72%,
+        310px
+      );
+  }
+
+
+  .radar-scan-sweep {
+    width:
+      min(
+        74%,
+        320px
+      );
+  }
+}
+
+
+
+/* ==================================================
+   PHASE_7G_V3_RADAR_20260816
+   Radar center geometry intentionally untouched.
+   ================================================== */
+
+
+/* OLD PRODUCTION PING */
+
+.network-observatory
+.radar-live-ping {
+  position:absolute; width:5px; height:5px; border-radius:50%;
+    background:#00e5ff; box-shadow:0 0 10px 2px rgba(0,229,255,.22);
+    opacity:0; animation:ping-life 2.6s ease-out forwards;
+}
+
+
+@keyframes ping-life {
+
+  0% {
+    opacity: 0;
+    transform: scale(.4);
+  }
+
+  18% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.15);
+  }
+
+}
+
+
+/* OLD 55 DEGREE SWEEP */
+
+.radar-scan-sweep {
+  background:
+    conic-gradient(
+      from 0deg,
+      rgba(0,229,255,.22)
+        0deg,
+      transparent
+        55deg,
+      transparent
+        360deg
+    ) !important;
+
+  opacity:
+    .64 !important;
+
+  mix-blend-mode:
+    screen !important;
+
+  filter:
+    drop-shadow(
+      0 0 10px
+      rgba(0,229,255,.18)
+    );
+}
+
+
+/* STRONGER NETWORK SPHERE */
+
+#home-network-canvas {
+  opacity:
+    1 !important;
+
+  filter:
+    brightness(1.30)
+    contrast(1.12)
+    saturate(1.12)
+    drop-shadow(
+      0 0 6px
+      rgba(0,229,255,.16)
+    )
+    drop-shadow(
+      0 0 14px
+      rgba(157,255,107,.07)
+    );
+}
+
+
+.network-observatory {
+  box-shadow:
+    0 0 32px
+      rgba(0,229,255,.035),
+    inset 0 0 25px
+      rgba(0,229,255,.035);
+}
+
+
+.radar-hud-ring.ring-a {
+  opacity:
+    .92 !important;
+
+  border-color:
+    rgba(0,229,255,.40)
+    !important;
+
+  box-shadow:
+    inset 0 0 20px
+      rgba(0,229,255,.055),
+    0 0 18px
+      rgba(0,229,255,.065);
+}
+
+
+/* HOME READABILITY */
+
+.rail-heading {
+  font-size:
+    12.5px !important;
+}
+
+
+.home-metric
+> div
+> span {
+  font-size:
+    13.5px !important;
+
+  line-height:
+    1.45;
+}
+
+
+.home-metric
+> div
+> small {
+  font-size:
+    11.5px !important;
+
+  line-height:
+    1.5;
+}
+
+
+.radar-stage-head
+> div:first-child
+> span {
+  font-size:
+    11.5px !important;
+}
+
+
+.chain-status {
+  font-size:
+    11.5px !important;
+}
+
+
+.radar-coordinate {
+  font-size:
+    11.5px !important;
+
+  line-height:
+    1.8;
+}
+
+
+.spark-head,
+.spark-waiting {
+  font-size:
+    12px !important;
+}
+
+
+.cloud-entry-copy
+> span {
+  font-size:
+    11.5px !important;
+}
+
+
+.cloud-entry-copy p {
+  font-size:
+    13.5px !important;
+
+  line-height:
+    1.6;
+}
+
+
+.cloud-entry-copy a {
+  font-size:
+    12px !important;
+}
+
+
+.activity-live,
+.activity-cell span {
+  font-size:
+    11.5px !important;
+}
+
+
+.activity-cell b {
+  font-size:
+    13.5px !important;
+}
+
+
+.activity-cell small {
+  font-size:
+    10.5px !important;
+}
+
+
+@media (
+  prefers-reduced-motion:
+  reduce
+) {
+
+  .network-observatory
+  .radar-live-ping {
+    display:
+      none !important;
+  }
+
+}
+
+
+
+/* ==================================================
+   PHASE_7J_STEP1_20260816
+   FULL WIDTH TPS CARD
+   ================================================== */
+
+.home-lower-grid {
+  grid-template-columns:
+    minmax(0, 1fr) !important;
+}
+
+.home-spark-card {
+  width: 100%;
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+
+.spark-chart {
+  height:
+    clamp(
+      300px,
+      22vw,
+      375px
+    ) !important;
+
+  min-height:
+    300px !important;
+}
+
+
+
+/* ==================================================
+   PHASE_7J_STEP2_20260816
+   TPS HOURLY POINTS
+   ================================================== */
+
+
+.spark-hour-grid {
+  stroke:
+    rgba(125,154,166,.13);
+
+  stroke-width:
+    1;
+
+  stroke-dasharray:
+    3 8;
+
+  vector-effect:
+    non-scaling-stroke;
+}
+
+
+.spark-hour-point {
+  fill:
+    #00e5ff;
+
+  stroke:
+    rgba(0,229,255,.20);
+
+  stroke-width:
+    8;
+
+  vector-effect:
+    non-scaling-stroke;
+
+  cursor:
+    default;
+
+  transition:
+    fill .16s ease;
+}
+
+
+.spark-hour-point:hover {
+  fill:
+    #9dff6b;
+}
+
+
+.spark-hour-label {
+  fill:
+    #b1c1c7;
+
+  font:
+    600 13px
+    "JetBrains Mono",
+    monospace;
+
+  letter-spacing:
+    .025em;
+}
+
+
+.spark-hour-line {
+  filter:
+    drop-shadow(
+      0 0 5px
+      rgba(0,229,255,.18)
+    );
+}
+
+
+@media (max-width: 700px) {
+
+  .spark-hour-label {
+    font-size:
+      14px;
+  }
+
+}
+
+
+
+/* ==================================================
+   PHASE_7J_HOVER_V2_20260816
+   CLEAN TPS GRAPH / HOVER DATA
+   ================================================== */
+
+
+/* No permanent vertical dotted guides. */
+.spark-hour-grid {
+  opacity:
+    0 !important;
+}
+
+
+/* Invisible hover zone around every TPS sample. */
+.spark-hour-hit {
+  fill:
+    transparent;
+
+  stroke:
+    transparent;
+
+  pointer-events:
+    all;
+
+  cursor:
+    crosshair;
+}
+
+
+/* Hide all permanent cyan dots. */
+.spark-hour-point {
+  opacity:
+    0 !important;
+
+  pointer-events:
+    none;
+
+  fill:
+    #00e5ff !important;
+
+  stroke:
+    rgba(0,229,255,.25) !important;
+
+  stroke-width:
+    8 !important;
+
+  transition:
+    opacity .12s ease;
+}
+
+
+/* Tooltip hidden by default. */
+.spark-hour-tooltip {
+  opacity:
+    0;
+
+  pointer-events:
+    none;
+
+  transition:
+    opacity .12s ease;
+}
+
+
+/* Show only the point currently being inspected. */
+.spark-hour-node:hover
+.spark-hour-point,
+.spark-hour-node:focus
+.spark-hour-point,
+.spark-hour-node:focus-visible
+.spark-hour-point {
+  opacity:
+    1 !important;
+}
+
+
+.spark-hour-node:hover
+.spark-hour-tooltip,
+.spark-hour-node:focus
+.spark-hour-tooltip,
+.spark-hour-node:focus-visible
+.spark-hour-tooltip {
+  opacity:
+    1;
+}
+
+
+.spark-hour-tooltip rect {
+  fill:
+    rgba(3,12,16,.97);
+
+  stroke:
+    rgba(0,229,255,.38);
+
+  stroke-width:
+    1;
+
+  vector-effect:
+    non-scaling-stroke;
+}
+
+
+.spark-tooltip-time {
+  fill:
+    #b7c7cc;
+
+  font:
+    600 12px
+    "JetBrains Mono",
+    monospace;
+}
+
+
+.spark-tooltip-value {
+  fill:
+    #9dff6b;
+
+  font:
+    700 13px
+    "JetBrains Mono",
+    monospace;
+}
+
+
+
+/* ==================================================
+   PHASE_7J_SLOGAN_20260816
+   MAIN HOME SLOGAN
+   ================================================== */
+
+
+.home-radar-slogan {
+  max-width:
+    660px;
+
+  margin:
+    10px 0 0;
+
+  padding-left:
+    13px;
+
+  border-left:
+    2px solid
+    rgba(0,229,255,.52);
+
+  color:
+    #b8cbd1;
+
+  font-family:
+    "Chakra Petch",
+    system-ui,
+    sans-serif;
+
+  font-size:
+    14px !important;
+
+  font-weight:
+    400;
+
+  line-height:
+    1.55;
+
+  letter-spacing:
+    .01em;
+}
+
+
+@media (max-width: 700px) {
+
+  .home-radar-slogan {
+    max-width:
+      100%;
+
+    margin-top:
+      8px;
+
+    font-size:
+      12.5px !important;
+
+    line-height:
+      1.5;
+  }
+
+}
+
+
+
+/* ==================================================
+   PHASE_7J_RADAR_HEADER_SLOGAN_V2_20260816
+   SLOGAN TOP BAR
+   KEEP BOTTOM-RIGHT MAINNET / LIVE
+   ================================================== */
+
+
+.radar-stage-head {
+  min-height:
+    70px !important;
+
+  display:
+    flex !important;
+
+  align-items:
+    center !important;
+
+  padding-top:
+    0 !important;
+
+  padding-bottom:
+    0 !important;
+}
+
+
+.radar-stage-message {
+  width:
+    100%;
+
+  min-width:
+    0;
+}
+
+
+.radar-stage-slogan {
+  display:
+    block;
+
+  width:
+    100%;
+
+  max-width:
+    1050px;
+
+  color:
+    #b8cbd1 !important;
+
+  font-family:
+    "Chakra Petch",
+    system-ui,
+    sans-serif !important;
+
+  font-size:
+    clamp(
+      13px,
+      .92vw,
+      15.5px
+    ) !important;
+
+  font-weight:
+    500 !important;
+
+  line-height:
+    1.4 !important;
+
+  letter-spacing:
+    .025em !important;
+
+  text-transform:
+    none !important;
+
+  white-space:
+    nowrap;
+}
+
+
+/*
+ * Old slogan location is no longer used.
+ */
+.home-radar-slogan {
+  display:
+    none !important;
+}
+
+
+/*
+ * Top chain-state badge is gone from markup.
+ * This is only defensive.
+ */
+.radar-stage-head .chain-status {
+  display:
+    none !important;
+}
+
+
+/*
+ * IMPORTANT:
+ * bottom coordinates stay visible.
+ */
+.radar-coordinate.left,
+.radar-coordinate.right {
+  display:
+    block !important;
+}
+
+
+@media (max-width: 1050px) {
+
+  .radar-stage-slogan {
+    max-width:
+      760px;
+
+    white-space:
+      normal;
+  }
+
+}
+
+
+@media (max-width: 700px) {
+
+  .radar-stage-head {
+    min-height:
+      82px !important;
+  }
+
+
+  .radar-stage-slogan {
+    font-size:
+      12px !important;
+
+    line-height:
+      1.45 !important;
+  }
+
+}
+
+
+
+/* ==================================================
+   PHASE_7J_SLOGAN_BANNER_20260816
+   FULL WIDTH RADAR SLOGAN
+   ================================================== */
+
+
+/*
+ * Dedicated clean strip above the globe.
+ */
+.radar-stage-head {
+  min-height:
+    74px !important;
+
+  padding:
+    0 26px !important;
+
+  display:
+    flex !important;
+
+  align-items:
+    center !important;
+
+  justify-content:
+    center !important;
+}
+
+
+/*
+ * Line — slogan — line
+ * fills the available center panel.
+ */
+.radar-stage-message {
+  width:
+    100% !important;
+
+  max-width:
+    none !important;
+
+  min-width:
+    0;
+
+  display:
+    flex !important;
+
+  align-items:
+    center;
+
+  justify-content:
+    center;
+
+  gap:
+    18px;
+}
+
+
+.radar-stage-message::before,
+.radar-stage-message::after {
+  content:
+    "";
+
+  height:
+    1px;
+
+  flex:
+    1 1 90px;
+
+  min-width:
+    28px;
+
+  background:
+    linear-gradient(
+      90deg,
+      rgba(0,229,255,.04),
+      rgba(0,229,255,.72)
+    );
+
+  box-shadow:
+    0 0 8px
+    rgba(0,229,255,.16);
+}
+
+
+.radar-stage-message::after {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(0,229,255,.72),
+      rgba(0,229,255,.04)
+    );
+}
+
+
+/*
+ * Main slogan.
+ */
+.radar-stage-slogan {
+  flex:
+    0 1 auto !important;
+
+  width:
+    auto !important;
+
+  max-width:
+    calc(100% - 180px) !important;
+
+  margin:
+    0 !important;
+
+  padding:
+    0 !important;
+
+  color:
+    #f3f8fa !important;
+
+  font-family:
+    "Chakra Petch",
+    system-ui,
+    sans-serif !important;
+
+  font-size:
+    clamp(
+      14.5px,
+      1.03vw,
+      17.5px
+    ) !important;
+
+  font-weight:
+    700 !important;
+
+  line-height:
+    1.2 !important;
+
+  letter-spacing:
+    .045em !important;
+
+  text-align:
+    center !important;
+
+  text-transform:
+    uppercase !important;
+
+  white-space:
+    nowrap !important;
+
+  text-shadow:
+    0 0 12px
+    rgba(0,229,255,.13);
+}
+
+
+/*
+ * Keep the globe clean.
+ * Slogan stays entirely inside header strip.
+ */
+.network-observatory {
+  margin-top:
+    0 !important;
+}
+
+
+/*
+ * IMPORTANT:
+ * Existing radar labels stay untouched.
+ */
+.radar-coordinate.left,
+.radar-coordinate.right {
+  display:
+    block !important;
+}
+
+
+/* Slight compression on medium screens. */
+@media (max-width: 1250px) {
+
+  .radar-stage-head {
+    padding:
+      0 18px !important;
+  }
+
+
+  .radar-stage-message {
+    gap:
+      12px;
+  }
+
+
+  .radar-stage-message::before,
+  .radar-stage-message::after {
+    flex-basis:
+      36px;
+
+    min-width:
+      18px;
+  }
+
+
+  .radar-stage-slogan {
+    max-width:
+      calc(100% - 75px) !important;
+
+    font-size:
+      13.5px !important;
+
+    letter-spacing:
+      .025em !important;
+  }
+
+}
+
+
+/* Mobile may use two lines. */
+@media (max-width: 760px) {
+
+  .radar-stage-head {
+    min-height:
+      88px !important;
+
+    padding:
+      0 12px !important;
+  }
+
+
+  .radar-stage-message::before,
+  .radar-stage-message::after {
+    display:
+      none;
+  }
+
+
+  .radar-stage-slogan {
+    width:
+      100% !important;
+
+    max-width:
+      100% !important;
+
+    white-space:
+      normal !important;
+
+    font-size:
+      12px !important;
+
+    line-height:
+      1.4 !important;
+
+    letter-spacing:
+      .025em !important;
+  }
+
+}
+
+
+
+/* ==================================================
+   PHASE_7J_SLOGAN_FORCE_20260816
+   Strong specificity override
+   ================================================== */
+
+
+/*
+ * High specificity is intentional.
+ * Older radar-stage typography rules were
+ * overriding the slogan down to ~11.5px.
+ */
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head
+.radar-stage-message {
+  transform:
+    translateY(-34px) !important;
+
+  gap:
+    24px !important;
+}
+
+
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head
+.radar-stage-message
+.radar-stage-slogan {
+  width:
+    auto !important;
+
+  max-width:
+    none !important;
+
+  color:
+    #f6fbfc !important;
+
+  font-family:
+    "Chakra Petch",
+    system-ui,
+    sans-serif !important;
+
+  font-size:
+    18.5px !important;
+
+  font-weight:
+    700 !important;
+
+  line-height:
+    1.12 !important;
+
+  letter-spacing:
+    .045em !important;
+
+  text-align:
+    center !important;
+
+  text-transform:
+    uppercase !important;
+
+  white-space:
+    nowrap !important;
+
+  text-shadow:
+    0 0 16px
+    rgba(0,229,255,.18) !important;
+}
+
+
+/*
+ * Let the side rules use the available empty width.
+ */
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head
+.radar-stage-message::before,
+
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head
+.radar-stage-message::after {
+  flex:
+    1 1 180px !important;
+
+  min-width:
+    70px !important;
+
+  height:
+    1px !important;
+
+  opacity:
+    1 !important;
+}
+
+
+/*
+ * Give the header enough room while visually
+ * pulling the slogan upward.
+ */
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head {
+  min-height:
+    88px !important;
+
+  padding-left:
+    30px !important;
+
+  padding-right:
+    30px !important;
+}
+
+
+@media (max-width: 1450px) {
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message {
+    transform:
+      translateY(-28px) !important;
+
+    gap:
+      14px !important;
+  }
+
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message
+  .radar-stage-slogan {
+    font-size:
+      15.5px !important;
+
+    letter-spacing:
+      .025em !important;
+  }
+
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message::before,
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message::after {
+    min-width:
+      28px !important;
+  }
+
+}
+
+
+@media (max-width: 760px) {
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message {
+    transform:
+      none !important;
+  }
+
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message
+  .radar-stage-slogan {
+    width:
+      100% !important;
+
+    white-space:
+      normal !important;
+
+    font-size:
+      12px !important;
+
+    line-height:
+      1.4 !important;
+  }
+
+}
+
+
+
+/* ==================================================
+   PHASE_7J_SLOGAN_TONE_20260816
+   Quieter slogan hierarchy
+   ================================================== */
+
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head
+.radar-stage-message
+.radar-stage-slogan {
+  color:
+    #c5d5d9 !important;
+
+  font-size:
+    16px !important;
+
+  font-weight:
+    600 !important;
+
+  letter-spacing:
+    .035em !important;
+
+  text-shadow:
+    0 0 10px
+    rgba(0,229,255,.07) !important;
+}
+
+
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head
+.radar-stage-message::before,
+
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head
+.radar-stage-message::after {
+  opacity:
+    .58 !important;
+
+  box-shadow:
+    0 0 6px
+    rgba(0,229,255,.10) !important;
+}
+
+
+@media (max-width: 1450px) {
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message
+  .radar-stage-slogan {
+    font-size:
+      14px !important;
+
+    letter-spacing:
+      .025em !important;
+  }
+
+}
+
+
+
+/* ==================================================
+   PHASE_7J_SLOGAN_CYAN_BALANCE_20260816
+   Cyan slogan + balanced globe spacing
+   ================================================== */
+
+
+/*
+ * RADAR brand cyan:
+ * #00E5FF
+ *
+ * Smaller and calmer than the previous white
+ * 18.5px / 700 treatment.
+ */
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head
+.radar-stage-message
+.radar-stage-slogan {
+  color:
+    #00e5ff !important;
+
+  font-size:
+    16px !important;
+
+  font-weight:
+    600 !important;
+
+  line-height:
+    1.15 !important;
+
+  letter-spacing:
+    .035em !important;
+
+  text-shadow:
+    0 0 11px
+    rgba(0,229,255,.13) !important;
+}
+
+
+/*
+ * Keep decorative cyan lines,
+ * but make them secondary to the slogan.
+ */
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head
+.radar-stage-message::before,
+
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head
+.radar-stage-message::after {
+  opacity:
+    .46 !important;
+
+  box-shadow:
+    0 0 6px
+    rgba(0,229,255,.10) !important;
+}
+
+
+
+/*
+ * PHASE_7J_GLOBE_AUTO_BALANCE_20260816
+ *
+ * Browser-measured desktop correction:
+ * 20px downward.
+ *
+ * Entire observatory moves together:
+ * canvas + nodes + rings + sweep + logo.
+ */
+@media (min-width: 761px) {
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .network-observatory {
+    translate:
+      0 20px !important;
+  }
+
+}
+
+
+/*
+ * Keep existing compact mobile geometry.
+ */
+@media (max-width: 760px) {
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .network-observatory {
+    translate:
+      none !important;
+  }
+
+}
+
+
+
+/* ==================================================
+   PHASE_7J_SLOGAN_SITE_YELLOW_20260817
+   Existing Acki Radar amber: #E2C96C
+   ================================================== */
+
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head
+.radar-stage-message
+.radar-stage-slogan {
+  color:
+    #e2c96c !important;
+
+  text-shadow:
+    0 0 10px
+    rgba(226,201,108,.12) !important;
+}
+
+
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head
+.radar-stage-message::before,
+
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head
+.radar-stage-message::after {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(226,201,108,.03),
+      rgba(226,201,108,.56)
+    ) !important;
+
+  box-shadow:
+    0 0 6px
+    rgba(226,201,108,.08) !important;
+}
+
+
+.home-command-view
+.home-command-grid
+.home-radar-stage
+.radar-stage-head
+.radar-stage-message::after {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(226,201,108,.56),
+      rgba(226,201,108,.03)
+    ) !important;
+}
+
+
+
+/* ==================================================
+   PHASE_7K_MOBILE_DRAWER_20260817
+   MOBILE SLOGAN / GLOBE CLEARANCE
+   ================================================== */
+
+
+@media (max-width: 760px) {
+
+  /*
+   * Reserve a real header zone for the multi-line
+   * slogan. The observatory used to begin too high,
+   * so the sphere entered the text area.
+   */
+  .home-radar-stage {
+    min-height:
+      600px !important;
+  }
+
+
+  .radar-stage-head {
+    min-height:
+      150px !important;
+
+    height:
+      150px !important;
+
+    padding:
+      22px 18px 12px !important;
+
+    display:
+      flex !important;
+
+    align-items:
+      flex-start !important;
+
+    justify-content:
+      center !important;
+
+    position:
+      relative;
+
+    z-index:
+      5;
+  }
+
+
+  .radar-stage-message {
+    width:
+      100% !important;
+
+    max-width:
+      100% !important;
+
+    margin:
+      0 !important;
+
+    transform:
+      none !important;
+  }
+
+
+  /*
+   * Decorative horizontal lines are useful on
+   * desktop but consume valuable mobile width.
+   */
+  .radar-stage-message::before,
+  .radar-stage-message::after {
+    display:
+      none !important;
+  }
+
+
+  .radar-stage-slogan {
+    width:
+      100% !important;
+
+    max-width:
+      100% !important;
+
+    margin:
+      0 auto !important;
+
+    color:
+      #e2c96c !important;
+
+    font-size:
+      14px !important;
+
+    font-weight:
+      600 !important;
+
+    line-height:
+      1.38 !important;
+
+    letter-spacing:
+      .025em !important;
+
+    text-align:
+      center !important;
+
+    white-space:
+      normal !important;
+  }
+
+
+  /*
+   * Move the ENTIRE observatory below the reserved
+   * slogan area. Canvas, sphere, rings, sweep and
+   * center logo all move together.
+   */
+  .network-observatory {
+    inset:
+      150px 0 58px !important;
+
+    translate:
+      none !important;
+  }
+
+
+  .radar-coordinate.left,
+  .radar-coordinate.right {
+    bottom:
+      17px !important;
+  }
+
+}
+
+
+@media (max-width: 420px) {
+
+  .home-radar-stage {
+    min-height:
+      585px !important;
+  }
+
+
+  .radar-stage-slogan {
+    font-size:
+      13.5px !important;
+
+    line-height:
+      1.4 !important;
+  }
+
+}
+
+
+
+/* ==================================================
+   PHASE_7K_MOBILE_SLOGAN_REAL_FIX_20260817
+
+   Measured root cause:
+   radar-stage-head:
+     left:22px
+     padding-left/right:30px
+
+   360px - 60px = legacy 300px content width.
+
+   This patch ONLY changes mobile slogan/header geometry.
+   Radar observatory geometry is untouched.
+   ================================================== */
+
+
+@media (max-width: 760px) {
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head {
+    left:
+      0 !important;
+
+    right:
+      auto !important;
+
+    width:
+      100% !important;
+
+    max-width:
+      none !important;
+
+    padding-left:
+      8px !important;
+
+    padding-right:
+      8px !important;
+
+    box-sizing:
+      border-box !important;
+  }
+
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message {
+    width:
+      100% !important;
+
+    max-width:
+      100% !important;
+
+    min-width:
+      0 !important;
+
+    flex:
+      1 1 auto !important;
+
+    margin:
+      0 !important;
+
+    padding:
+      0 !important;
+
+    transform:
+      none !important;
+
+    box-sizing:
+      border-box !important;
+
+    text-align:
+      center !important;
+  }
+
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message
+  .radar-stage-slogan {
+    display:
+      block !important;
+
+    width:
+      100% !important;
+
+    max-width:
+      100% !important;
+
+    min-width:
+      0 !important;
+
+    margin:
+      0 !important;
+
+    padding:
+      0 !important;
+
+    color:
+      transparent !important;
+
+    font-size:
+      0 !important;
+
+    line-height:
+      1 !important;
+
+    text-align:
+      center !important;
+  }
+
+
+  /*
+   * Controlled visual composition.
+   * Wide and symmetrical on a 390px mobile viewport.
+   */
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message
+  .radar-stage-slogan::before {
+    content:
+      "ACKI NACKI AĞINI, MADENCİLİK AKIŞINI VE CANLI\A ZİNCİR VERİLERİNİ TEK MERKEZDEN TAKİP EDİN.";
+
+    display:
+      block;
+
+    width:
+      100%;
+
+    margin:
+      0 auto;
+
+    color:
+      #e2c96c;
+
+    font-family:
+      "Chakra Petch",
+      sans-serif;
+
+    font-size:
+      12.2px;
+
+    font-weight:
+      600;
+
+    line-height:
+      1.55;
+
+    letter-spacing:
+      .014em;
+
+    text-align:
+      center;
+
+    white-space:
+      pre-line;
+
+    text-transform:
+      uppercase;
+
+    text-shadow:
+      0 0 9px
+      rgba(226,201,108,.10);
+  }
+
+
+  html[lang="en"]
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message
+  .radar-stage-slogan::before {
+    content:
+      "TRACK THE ACKI NACKI NETWORK, MINING FLOW AND LIVE\A CHAIN DATA FROM ONE PLACE.";
+  }
+
+
+  html[lang="ru"]
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message
+  .radar-stage-slogan::before {
+    content:
+      "СЕТЬ ACKI NACKI, МАЙНИНГ И ДАННЫЕ БЛОКЧЕЙНА\A В РЕАЛЬНОМ ВРЕМЕНИ В ОДНОМ МЕСТЕ.";
+  }
+
+}
+
+
+@media (max-width: 360px) {
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message
+  .radar-stage-slogan::before {
+    font-size:
+      10.9px;
+
+    letter-spacing:
+      .006em;
+  }
+
+}
+
+
+
+/* ==================================================
+   PHASE_7K_MOBILE_SLOGAN_SYMMETRIC_20260817
+   Centered visual pyramid.
+   Radar geometry untouched.
+   ================================================== */
+
+@media (max-width: 760px) {
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message
+  .radar-stage-slogan::before {
+
+    content:
+      "ACKI NACKI AĞINI, MADENCİLİK\A AKIŞINI VE CANLI ZİNCİR VERİLERİNİ\A TEK MERKEZDEN TAKİP EDİN.";
+
+    display:
+      block !important;
+
+    width:
+      100% !important;
+
+    margin:
+      0 auto !important;
+
+    font-size:
+      15px !important;
+
+    font-weight:
+      600 !important;
+
+    line-height:
+      1.48 !important;
+
+    letter-spacing:
+      .012em !important;
+
+    text-align:
+      center !important;
+
+    white-space:
+      pre-line !important;
+
+    color:
+      #e2c96c !important;
+  }
+
+}
+
+
+@media (max-width: 360px) {
+
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message
+  .radar-stage-slogan::before {
+
+    font-size:
+      13.6px !important;
+
+  }
+
+}
+
+
+
+/* ==================================================
+   PHASE_7L_MOBILE_SLOGAN_I18N_V6_20260817
+
+   Existing approved mobile geometry untouched.
+   ================================================== */
+
+
+@media (max-width: 760px) {
+
+  html[lang="tr"]
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message
+  .radar-stage-slogan::before {
+
+    content:
+      "ACKI NACKI AĞINI, MADENCİLİK\A AKIŞINI VE CANLI ZİNCİR VERİLERİNİ\A TEK MERKEZDEN TAKİP EDİN.";
+
+  }
+
+
+  html[lang="en"]
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message
+  .radar-stage-slogan::before {
+
+    content:
+      "TRACK THE ACKI NACKI NETWORK\A MINING FLOW AND LIVE CHAIN DATA\A FROM ONE PLACE.";
+
+  }
+
+
+  html[lang="ru"]
+  .home-command-view
+  .home-command-grid
+  .home-radar-stage
+  .radar-stage-head
+  .radar-stage-message
+  .radar-stage-slogan::before {
+
+    content:
+      "СЕТЬ ACKI NACKI, МАЙНИНГ И ДАННЫЕ\A БЛОКЧЕЙНА В РЕАЛЬНОМ ВРЕМЕНИ\A В ОДНОМ МЕСТЕ.";
+
+  }
+
+}
+

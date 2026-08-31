@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Arc ödeme · Acki Nacki Radar</title>
+<!--
+  Served as a static file under the site CSP:
+    script-src 'self' 'unsafe-inline' https://telegram.org
+    connect-src 'self'
+
+  So: no CDN, no external fetch, no WalletConnect relay. Everything this page
+  needs comes from /api/arc/*, and the chain calls go through the injected
+  wallet — those are handled by the extension, not by page network traffic, so
+  connect-src does not apply to them. That is what makes this work without
+  touching the security header.
+
+  A WalletConnect/Reown path (for wallets other than MetaMask) needs script-src
+  and connect-src widened first. Deliberately not done here.
+-->
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0f14;
+    --card: #131a22;
+    --line: #22303d;
+    --text: #e6edf3;
+    --muted: #8b9bab;
+    --accent: #3fb950;
+    --warn: #d29922;
+    --err: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px 16px 48px;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    justify-content: center;
+  }
+  .wrap { width: 100%; max-width: 460px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px;
+    margin-bottom: 14px;
+  }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; }
+  .row + .row { border-top: 1px solid var(--line); }
+  .row .k { color: var(--muted); }
+  .row .v { font-weight: 600; text-align: right; word-break: break-all; }
+  .amount { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; }
+  .banner {
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 13px;
+    margin-bottom: 14px;
+    border: 1px solid;
+  }
+  .banner.test { background: rgba(210,153,34,.10); border-color: rgba(210,153,34,.45); color: #f0c674; }
+  .banner.err  { background: rgba(248, 81, 73,.10); border-color: rgba(248,81,73,.45); color: #ff8a80; }
+  .banner.ok   { background: rgba(63,185,80,.10);  border-color: rgba(63,185,80,.45);  color: #7ee787; }
+  button {
+    width: 100%;
+    padding: 14px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #06131a;
+    background: var(--accent);
+    border: 0;
+    border-radius: 10px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  button[disabled] { opacity: .45; cursor: not-allowed; }
+  button.ghost {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--line);
+  }
+  a { color: #58a6ff; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  .steps { color: var(--muted); font-size: 13px; padding-left: 18px; margin: 10px 0 0; }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Arc ödemesi</h1>
+  <div class="sub">Acki Nacki Radar</div>
+
+  <div id="banner" class="banner test">
+    <strong>Bu bir test ağı ödemesidir.</strong> Kullanacağın USDC, Circle
+    faucet'inden ücretsiz alınır ve gerçek para değildir.
+  </div>
+
+  <div id="loading" class="card">Fatura yükleniyor…</div>
+
+  <div id="invoice" class="card hide">
+    <div class="amount"><span id="amount">—</span> <span style="font-size:16px;color:var(--muted)">test USDC</span></div>
+    <div class="row"><span class="k">Fatura kodu</span><span class="v mono" id="code">—</span></div>
+    <div class="row"><span class="k">Ağ</span><span class="v" id="chain">—</span></div>
+    <div class="row"><span class="k">Geçerlilik</span><span class="v" id="expiry">—</span></div>
+  </div>
+
+  <div id="actions" class="hide">
+    <button id="payBtn">Cüzdanı bağla ve öde</button>
+    <ol class="steps">
+      <li>Cüzdan Arc Testnet ağına geçirilir (gerekirse otomatik eklenir)</li>
+      <li>Ödemeyi cüzdanında onaylarsın</li>
+      <li>Zincirde göründüğü an aboneliğin açılır — sayfayı kapatabilirsin</li>
+    </ol>
+  </div>
+
+  <div id="noWallet" class="card hide">
+    <p style="margin-top:0">Bu tarayıcıda cüzdan bulunamadı.</p>
+    <button class="ghost" id="mmBtn">MetaMask uygulamasında aç</button>
+    <p class="sub" style="margin:12px 0 0">
+      Test USDC'n yoksa önce
+      <a id="faucet" href="https://faucet.circle.com" target="_blank" rel="noopener">Circle faucet</a>'inden al.
+    </p>
+  </div>
+
+  <div id="result" class="card hide"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // pay(address,bytes32) — from `cast sig`, not written by hand.
+  var PAY_SELECTOR = "0x46f8f304";
+
+  var $ = function (id) { return document.getElementById(id); };
+  var cfg = null;
+  var invoice = null;
+
+  function show(el, on) { el.classList.toggle("hide", !on); }
+
+  function fail(message) {
+    var b = $("banner");
+    b.className = "banner err";
+    b.textContent = message;
+    show($("loading"), false);
+  }
+
+  // 18-decimal native units -> a short human string. The ERC-20 view of USDC
+  // on Arc uses 6 decimals; this page never touches that one.
+  function formatUsdc(raw) {
+    var s = String(raw);
+    if (s.length <= 18) s = "0".repeat(19 - s.length) + s;
+    var whole = s.slice(0, s.length - 18);
+    var frac = s.slice(s.length - 18).slice(0, 2);
+    return whole + "." + frac;
+  }
+
+  function padHex(value, chars) {
+    var hex = String(value).replace(/^0x/, "").toLowerCase();
+    while (hex.length < chars) hex = "0" + hex;
+    return hex;
+  }
+
+  function toHexQuantity(decimalString) {
+    return "0x" + BigInt(decimalString).toString(16);
+  }
+
+  function getCode() {
+    var params = new URLSearchParams(location.search);
+    var raw = params.get("i") || params.get("code") || "";
+    return raw.trim().toUpperCase();
+  }
+
+  function renderExpiry() {
+    var left = new Date(invoice.expiresAt).getTime() - Date.now();
+    if (left <= 0) {
+      $("expiry").textContent = "süresi doldu";
+      $("payBtn").disabled = true;
+      return;
+    }
+    var mins = Math.floor(left / 60000);
+    var secs = Math.floor((left % 60000) / 1000);
+    $("expiry").textContent = mins + " dk " + (secs < 10 ? "0" : "") + secs + " sn";
+  }
+
+  // The invoice leaves the pending list the moment the bot credits it, and the
+  // server then reports status "paid". Polling that is how this page stops
+  // saying "sent" and starts saying "done" — the payer should not have to go
+  // to Telegram to find out whether it worked.
+  var pollTimer = null;
+
+  function showPaid(days) {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+
+    var b = $("banner");
+    b.className = "banner ok";
+    b.innerHTML =
+      "<strong>Ödeme tamamlandı.</strong> Aboneliğine "
+      + (days || 3)
+      + " gün eklendi.";
+
+    show($("actions"), false);
+    show($("invoice"), false);
+
+    var out = $("result");
+    var keep = out.innerHTML;
+    out.innerHTML =
+      '<div class="row"><span class="k">Durum</span>'
+      + '<span class="v" style="color:#7ee787">onaylandı</span></div>'
+      + keep;
+    show(out, true);
+  }
+
+  function pollSettlement(code) {
+    if (pollTimer) {
+      return;
+    }
+
+    var started = Date.now();
+
+    pollTimer = setInterval(function () {
+      // Give up quietly after ten minutes. By then something is wrong that a
+      // spinning page will not fix, and the invoice is still recoverable from
+      // Telegram.
+      if (Date.now() - started > 600000) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        return;
+      }
+
+      fetch("/api/arc/invoice/" + encodeURIComponent(code))
+        .then(function (r) { return r.json(); })
+        .then(function (body) {
+          if (body && body.ok && body.status === "paid") {
+            showPaid(body.days);
+          }
+        })
+        .catch(function () {
+          // A failed poll is not worth telling the payer about; the next one
+          // is five seconds away.
+        });
+    }, 5000);
+  }
+
+  function boot() {
+    var code = getCode();
+
+    if (!/^[A-Z0-9]{4,32}$/.test(code)) {
+      fail("Geçersiz bağlantı. Ödeme bağlantısını Telegram'daki mesajdan tekrar aç.");
+      return;
+    }
+
+    // Both come from our own origin, which is all connect-src 'self' permits.
+    Promise.all([
+      fetch("/api/arc/config").then(function (r) { return r.json(); }),
+      fetch("/api/arc/invoice/" + encodeURIComponent(code)).then(function (r) {
+        return r.json().then(function (body) { return { status: r.status, body: body }; });
+      })
+    ]).then(function (results) {
+      cfg = results[0];
+      var res = results[1];
+
+      if (!cfg || !cfg.ok || !cfg.enabled) {
+        fail("Arc ödemesi şu anda kapalı.");
+        return;
+      }
+
+      if (res.status === 404) {
+        fail("Bu fatura bulunamadı. Süresi dolmuş ya da zaten ödenmiş olabilir.");
+        return;
+      }
+
+      if (!res.body || !res.body.ok || !res.body.invoiceId) {
+        fail("Fatura okunamadı.");
+        return;
+      }
+
+      invoice = res.body;
+
+      // Someone reopening the link after paying should see the outcome, not an
+      // error about a missing invoice.
+      if (invoice.status === "paid") {
+        show($("loading"), false);
+        showPaid(invoice.days);
+        return;
+      }
+
+      if (invoice.expired) {
+        fail("Bu faturanın süresi dolmuş. Telegram'dan /trial_arc ile yenisini al.");
+        return;
+      }
+
+      $("amount").textContent = formatUsdc(invoice.amountRaw);
+      $("code").textContent = invoice.code;
+      $("chain").textContent = cfg.chainName;
+      renderExpiry();
+      setInterval(renderExpiry, 1000);
+
+      show($("loading"), false);
+      show($("invoice"), true);
+
+      // Watch from the start: the payer may have paid in another tab, or be
+      // returning to a link they left open.
+      pollSettlement(invoice.code);
+
+      if (window.ethereum) {
+        show($("actions"), true);
+      } else {
+        // No injected provider. On a phone the reliable route is MetaMask's
+        // own in-app browser, where window.ethereum exists — reached by deep
+        // link, which needs no SDK and so no CSP change.
+        show($("noWallet"), true);
+      }
+    }).catch(function () {
+      fail("Sunucuya ulaşılamadı. Bağlantını kontrol edip tekrar dene.");
+    });
+  }
+
+  $("mmBtn").addEventListener("click", function () {
+    var target = location.host + location.pathname + location.search;
+    location.href = "https://metamask.app.link/dapp/" + target;
+  });
+
+  $("payBtn").addEventListener("click", function () {
+    var btn = $("payBtn");
+    btn.disabled = true;
+    btn.textContent = "Cüzdan bekleniyor…";
+
+    var eth = window.ethereum;
+    var chainHex = "0x" + cfg.chainId.toString(16);
+
+    eth.request({ method: "eth_requestAccounts" })
+      .then(function (accounts) {
+        var from = accounts && accounts[0];
+        if (!from) throw new Error("NO_ACCOUNT");
+
+        return eth.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: chainHex }]
+        }).catch(function (switchError) {
+          // 4902 = the wallet does not know this chain yet. Adding it for the
+          // payer beats telling them to enter RPC details by hand.
+          if (switchError && (switchError.code === 4902 || switchError.code === -32603)) {
+            return eth.request({
+              method: "wallet_addEthereumChain",
+              params: [{
+                chainId: chainHex,
+                chainName: cfg.chainName,
+                nativeCurrency: { name: "USD Coin", symbol: "USDC", decimals: 18 },
+                rpcUrls: [cfg.rpcUrl],
+                blockExplorerUrls: [cfg.explorerUrl]
+              }]
+            });
+          }
+          throw switchError;
+        }).then(function () { return from; });
+      })
+      .then(function (from) {
+        btn.textContent = "Onay bekleniyor…";
+
+        var data = PAY_SELECTOR
+          + padHex(cfg.merchant, 64)
+          + padHex(invoice.invoiceId, 64);
+
+        return eth.request({
+          method: "eth_sendTransaction",
+          params: [{
+            from: from,
+            to: cfg.registry,
+            value: toHexQuantity(invoice.amountRaw),
+            data: data
+          }]
+        });
+      })
+      .then(function (txHash) {
+        var b = $("banner");
+        b.className = "banner ok";
+        b.innerHTML = "<strong>Ödeme gönderildi.</strong> Zincirde onaylandığı an aboneliğin açılacak — Telegram'dan bildirim gelecek.";
+
+        show($("actions"), false);
+        var out = $("result");
+        out.innerHTML =
+          '<div class="row"><span class="k">İşlem</span>'
+          + '<span class="v mono"><a href="' + cfg.explorerUrl + "/tx/" + txHash
+          + '" target="_blank" rel="noopener">' + txHash.slice(0, 10) + "…" + txHash.slice(-8)
+          + "</a></span></div>";
+        show(out, true);
+
+        pollSettlement(invoice.code);
+      })
+      .catch(function (error) {
+        var code = error && error.code;
+        var message;
+
+        if (code === 4001) {
+          message = "Ödemeyi iptal ettin.";
+        } else if (String(error && error.message || "").indexOf("insufficient") !== -1) {
+          message = "Bakiyen yetersiz. Circle faucet'inden test USDC al ve tekrar dene.";
+        } else {
+          message = "Ödeme gönderilemedi: " + (error && error.message ? error.message : "bilinmeyen hata");
+        }
+
+        var b = $("banner");
+        b.className = "banner err";
+        b.textContent = message;
+
+        btn.disabled = false;
+        btn.textContent = "Tekrar dene";
+      });
+  });
+
+  boot();
+})();
+</script>
+</body>
+</html>
