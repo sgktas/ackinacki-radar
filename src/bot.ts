@@ -2410,9 +2410,8 @@ function buildMiningSummaryStatusMessage(
     lines.push(
       "Bağlı madencilik cüzdanın yok.",
       "",
-      "1) /miner_connect <cüzdan adı>",
-      "2) /miner_check",
-      "3) /miner_start",
+      "Panelden cüzdanını bağla ve madenciliği başlat:",
+      "https://ackinackiradar.com/cloud-miner",
     );
 
     return lines.join("\n");
@@ -2823,7 +2822,7 @@ async function sendWalletsScreen(ctx: any) {
 function buildMainKeyboard() {
   return Markup.keyboard([
     ["/start 🚀", "/info 🔍"],
-    ["/epoch ⏳", "/trial 🎁"],
+    ["/trial 🎁", "/arc 🧪"],
     ["/help ℹ️"],
   ]).resize();
 }
@@ -2866,15 +2865,18 @@ function buildHowToUseMessage(_languageCode?: string) {
   return [
     "📖 Getting Started",
     "",
-    `1) 🎁 Start your free ${TRIAL_DAYS}-day gift with /trial. No payment is required.`,
-    "2) Press the Dashboard button on the left. The Mini App recognizes your Telegram account automatically.",
-    "3) Open Cloud Miner from the Dashboard menu.",
-    "4) Enter your Acki Nacki wallet name and press Connect Wallet.",
-    "5) Open AN Wallet and approve the mining-key request.",
-    "6) Return to Cloud Miner, press Check, then start mining after verification.",
-    `7) When the ${TRIAL_DAYS}-day gift ends, an active plan is required to continue mining. Buy one in Plans with Stars, USDT/TON or NACKL.`,
+    `1) 🎁 /trial ile ${TRIAL_DAYS} günlük ücretsiz hediyeni al. Ödeme gerekmez.`,
+    "2) Soldaki Dashboard butonuna bas. Mini App Telegram hesabını otomatik tanır.",
+    "3) Dashboard menüsünden Cloud Miner'ı aç.",
+    "4) Acki Nacki cüzdan adını gir ve Connect Wallet'a bas.",
+    "5) AN Wallet'ı açıp madencilik anahtarı isteğini onayla.",
+    "6) Cloud Miner'a dön, Check'e bas, doğrulandıktan sonra madenciliği başlat.",
+    `7) 🧪 Hediye bitince Arc test ağından ${TRIAL_DAYS} gün daha alabilirsin — ücretsiz test USDC ile: /arc`,
+    "8) Sonrasında devam etmek için Planlar'dan Stars, USDT/TON veya NACKL ile plan alabilirsin.",
     "",
-    "Need help? Use /help.",
+    "Madencilik panelden yönetilir; botta madencilik komutu yoktur.",
+    "",
+    "Yardım için /help."
   ].join("\n");
 }
 
@@ -2895,8 +2897,11 @@ function buildHelpMessage(_languageCode?: string) {
     "🎁 /trial",
     `Start a free ${TRIAL_DAYS}-day Cloud Miner gift with no payment required. Available once per account.`,
     "",
-    "⏳ /epoch",
-    "Show the hours and minutes remaining until the next mining epoch.",
+    "🧪 /arc",
+    `Arc test ağı üzerinden ${TRIAL_DAYS} gün daha kazan. Ücretsiz test USDC ile, gerçek para değil.`,
+    "",
+    "⛏️ Madencilik",
+    "Cüzdan bağlama, başlatma/durdurma ve canlı durum panelde: https://ackinackiradar.com/cloud-miner",
     "",
     "ℹ️ /help",
     "Open this help screen.",
@@ -6493,7 +6498,7 @@ async function runTonPaymentsCheckTick(bot: Telegraf<any>) {
             `Tutar: ${formatPayAmount(transfer.amountRaw, transfer.currency)} ${transfer.currency === "ton" ? "TON" : "USDT"}`,
             `Bitiş: ${new Date(activeUntil).toLocaleString("tr-TR")}`,
             "",
-            "Madenciliği başlatmak için: /miner_start",
+            "Madenciliği başlatmak için panele git: https://ackinackiradar.com/cloud-miner",
           ].join("\n"),
         );
       } catch (error) {
@@ -6680,7 +6685,7 @@ async function runArcPaymentsCheckTick(bot: Telegraf<any>) {
             `Tutar: ${formatUsdcAmount(paidRaw.toString())} test USDC`,
             `Bitiş: ${new Date(activeUntil).toLocaleString("tr-TR")}`,
             "",
-            "Madenciliği başlatmak için: /miner_start",
+            "Madenciliği başlatmak için panele git: https://ackinackiradar.com/cloud-miner",
           ].join("\n"),
         );
       } catch (error) {
@@ -6966,7 +6971,7 @@ async function runNacklPaymentsCheckTick(bot: Telegraf<any>) {
             `Tutar: ${formatNacklAmount(notice.amountRaw)} NACKL`,
             `Bitiş: ${new Date(notice.activeUntil).toLocaleString("tr-TR")}`,
             "",
-            "Madenciliği başlatmak için: /miner_start",
+            "Madenciliği başlatmak için panele git: https://ackinackiradar.com/cloud-miner",
           ].join("\n"),
         );
       } catch (error) {
@@ -8264,7 +8269,19 @@ export async function startBot(botToken: string) {
     const state = readPaymentsState();
 
     if ((state.trialUsed ?? []).includes(chatId)) {
-      await ctx.reply("You have already used your free trial.");
+      // Whoever has spent the free trial is the best audience for the Arc
+      // one — they already want more and have not paid. Answering only
+      // "already used" threw that moment away.
+      await ctx.reply(
+        [
+          "Ücretsiz denemeni zaten kullandın.",
+          "",
+          `🧪 Arc test ağı üzerinden ${TRIAL_DAYS} gün daha kazanabilirsin —`,
+          "gerçek para değil, Circle faucet'inden ücretsiz aldığın test USDC ile.",
+          "",
+          "https://ackinackiradar.com/arc",
+        ].join("\n"),
+      );
       return;
     }
 
@@ -8279,16 +8296,19 @@ export async function startBot(botToken: string) {
 
     await ctx.reply(
       [
-        `🎁 Your ${TRIAL_DAYS}-day free trial has started.`,
+        `🎁 ${TRIAL_DAYS} günlük ücretsiz denemen başladı.`,
         "",
-        `Expires: ${new Date(activeUntil).toUTCString()}`,
+        `Bitiş: ${new Date(activeUntil).toLocaleString("tr-TR")}`,
         "",
-        "Now open the dashboard and connect your wallet:",
-        "https://ackinackiradar.com",
+        "Şimdi panele gir ve cüzdanını bağla:",
+        "https://ackinackiradar.com/cloud-miner",
         "",
-        "1) Press “Telegram ile devam et” to sign in",
-        "2) Enter your Acki Nacki wallet name and connect",
-        "3) Approve in your wallet app, then press Check",
+        "1) “Telegram ile devam et” ile giriş yap",
+        "2) Acki Nacki cüzdan adını gir ve bağla",
+        "3) Cüzdan uygulamanda onayla, sonra Check'e bas",
+        "",
+        `🧪 Deneme bitince Arc test ağından ${TRIAL_DAYS} gün daha alabilirsin:`,
+        "https://ackinackiradar.com/arc",
       ].join("\n"),
     );
   }
@@ -8383,6 +8403,7 @@ export async function startBot(botToken: string) {
   }
 
   bot.command("trial", handleTrialRequest);
+  bot.command("arc", handleArcTrialRequest);
   bot.command("trial_arc", handleArcTrialRequest);
   bot.hears(MENU_TRIAL, handleTrialRequest);
 
@@ -8434,74 +8455,10 @@ export async function startBot(botToken: string) {
     );
   });
 
-  bot.command("radar_wallets", replyForgetWallet);
-  bot.command("forget", replyForgetWallet);
-
+    
   // The counterpart to /miner_connect. /miner_stop only pauses; nothing until
   // now could delete the record, and it stores the mining secret key.
-  bot.command("miner_remove", async (ctx) => {
-    const chatId = ctx.chat?.id;
-    const walletName = getCommandArgument(ctx.message?.text).trim();
-
-    if (!chatId) {
-      await ctx.reply("Could not read chat info.");
-      return;
-    }
-
-    const state = readBeeMinerState();
-    const owned = state.miners.filter((miner) => miner.chatId === chatId);
-
-    if (!walletName) {
-      await ctx.reply(
-        [
-          "Usage: /miner_remove <wallet name>",
-          "",
-          owned.length
-            ? `Your wallets: ${owned.map((m) => m.walletName).join(", ")}`
-            : "You have no connected wallet.",
-        ].join("\n"),
-      );
-      return;
-    }
-
-    const record = owned.find(
-      (miner) => miner.walletName.toLowerCase() === walletName.toLowerCase(),
-    );
-
-    if (!record) {
-      await ctx.reply(`No connected wallet named "${walletName}".`);
-      return;
-    }
-
-    // Discard the pooled instance while the keys are still readable, otherwise
-    // a running session would outlive the record it belongs to.
-    if (record.minerAddress) {
-      beeDiscardMiner({
-        appId: record.appId,
-        minerAddress: record.minerAddress,
-        publicKey: record.publicKey,
-      });
-    }
-
-    state.miners = state.miners.filter((miner) => miner.id !== record.id);
-    writeBeeMinerState(state);
-
-    console.log("Miner removed via bot:", {
-      chatId,
-      walletName: record.walletName,
-      previousStatus: record.status,
-    });
-
-    await ctx.reply(
-      [
-        `🗑️ ${record.walletName} removed.`,
-        "",
-        "Mining stopped and the stored keys were deleted.",
-        "You can reconnect any time with /miner_connect.",
-      ].join("\n"),
-    );
-  });
-  bot.command("update", replyManualMiningUpdate);
+    bot.command("update", replyManualMiningUpdate);
   bot.command("mining_status", replyMiningStatus);
   bot.command("status", async (ctx) =>
     ctx.reply(buildMiningSummaryStatusMessage(ctx.chat?.id)),
@@ -8862,10 +8819,7 @@ export async function startBot(botToken: string) {
     }
   }
 
-  bot.command("miner_connect", async (ctx) =>
-    startWalletConnect(ctx, getCommandArgument(ctx.message?.text)),
-  );
-
+  
   // Shared by /miner_check and the "I approved it" button. Checks every pending
   // connection for the chat, so the button does not need to say which one.
   async function runMinerCheck(ctx: any) {
@@ -9024,181 +8978,49 @@ export async function startBot(botToken: string) {
     writeBeeMinerState(state);
   }
 
-  bot.command("miner_check", runMinerCheck);
-
+  
   bot.action(/^mn:chk:(.+)$/, async (ctx) => {
     await ctx.answerCbQuery("Checking…");
     await runMinerCheck(ctx);
     await sendWalletsScreen(ctx);
   });
 
-  bot.command("miner_status", async (ctx) => {
-    const chatId = ctx.chat?.id;
-
-    if (!chatId) {
-      await ctx.reply("Sohbet bilgisi alınamadı.");
-      return;
-    }
-
-    const state = readBeeMinerState();
-    const mine = state.miners.filter((m) => m.chatId === chatId);
-
-    if (!mine.length) {
-      await ctx.reply("Henüz bağlı bir cüzdanın yok. /miner_connect <cüzdan adı> ile başla.");
-      return;
-    }
-
-    const statusLabel: Record<BeeMinerRecord["status"], string> = {
-      pending_authorization: "⏳ Onay bekliyor",
-      active: "✅ Aktif",
-      error: "⚠️ Hata",
-      stopped: "⏹️ Durduruldu",
-    };
-
-    const lines = mine.map((m) => {
-      const bits = [
-        `${m.walletName}: ${statusLabel[m.status]}`,
-        m.lastSessionAt ? `Son oturum: ${m.lastSessionAt}` : null,
-        m.lastTapsSent != null ? `Son tap sayısı: ${m.lastTapsSent}` : null,
-        m.lastError ? `Son hata: ${m.lastError}` : null,
-      ].filter(Boolean);
-      return bits.join(" | ");
+  
+  
+  
+  
+  // Mining moved to the dashboard.
+  //
+  // These used to run mining from chat, which meant two competing control
+  // surfaces for the same wallet — the bot and the Cloud Miner console — and
+  // the bot's copy could not show live status the way the console does.
+  // They are kept as redirects rather than deleted because chat history is
+  // full of older messages telling people to tap /miner_start, and a command
+  // that answers nothing at all reads like the bot is broken.
+  for (const retired of [
+    "miner_connect",
+    "miner_check",
+    "miner_status",
+    "miner_start",
+    "miner_stop",
+    "miner_remove",
+    "radar_wallets",
+    "forget",
+    "epoch",
+  ]) {
+    bot.command(retired, async (ctx) => {
+      await ctx.reply(
+        [
+          "\u26cf\ufe0f Madencilik art\u0131k panelden y\u00f6netiliyor.",
+          "",
+          "C\u00fczdan ba\u011flama, ba\u015flatma/durdurma ve canl\u0131 durum i\u00e7in:",
+          "https://ackinackiradar.com/cloud-miner",
+          "",
+          "Soldaki Dashboard butonundan da a\u00e7abilirsin.",
+        ].join("\n"),
+      );
     });
-
-    await ctx.reply(
-      [
-        "⛏️ Bulut Madencilik Durumu",
-        "",
-        buildEpochClockText(),
-        "",
-        ...lines,
-      ].join("\n"),
-    );
-  });
-
-  bot.command("epoch", async (ctx) => {
-    await ctx.reply(buildMiningCycleRemainingText());
-  });
-
-  bot.command("miner_stop", async (ctx) => {
-    const walletName = getCommandArgument(ctx.message?.text);
-    const chatId = ctx.chat?.id;
-
-    if (!chatId) {
-      await ctx.reply("Sohbet bilgisi alınamadı.");
-      return;
-    }
-
-    if (!walletName) {
-      await ctx.reply("Kullanım: /miner_stop <cüzdan adı>");
-      return;
-    }
-
-    const state = readBeeMinerState();
-    const record = state.miners.find(
-      (m) => m.chatId === chatId && m.walletName === walletName,
-    );
-
-    if (!record) {
-      await ctx.reply("Bu isimde bağlı bir cüzdan bulunamadı.");
-      return;
-    }
-
-    record.status = "stopped";
-    writeBeeMinerState(state);
-    if (record.minerAddress) {
-      beeDiscardMiner({
-        appId: record.appId,
-        minerAddress: record.minerAddress,
-        publicKey: record.publicKey,
-      });
-    }
-
-    await ctx.reply(`⏹️ ${walletName} için otomatik madencilik durduruldu.`);
-  });
-
-  bot.command("miner_start", async (ctx) => {
-    const walletName = getCommandArgument(ctx.message?.text);
-    const chatId = ctx.chat?.id;
-
-    if (!chatId) {
-      await ctx.reply("Sohbet bilgisi alınamadı.");
-      return;
-    }
-
-    if (
-      !isAdminChatId(chatId) &&
-      !hasActiveSubscriptionForChat(readPaymentsState(), chatId)
-    ) {
-      await ctx.reply(
-        [
-          "💎 Aktif bir bulut madenciliği aboneliğin yok.",
-          "",
-          `Önce ${TRIAL_DAYS} günlük ücretsiz denemeyi kullanabilir veya bir plan satın alabilirsin.`,
-          "",
-          "Planlar: /plans",
-          `Ücretsiz deneme: /trial`,
-        ].join("\n"),
-      );
-      return;
-    }
-
-    const state = readBeeMinerState();
-    const ownMiners = state.miners.filter((miner) => miner.chatId === chatId);
-    const stoppedMiners = ownMiners.filter((miner) => miner.status === "stopped");
-    const record = walletName
-      ? ownMiners.find((miner) => miner.walletName === walletName)
-      : stoppedMiners.length === 1
-        ? stoppedMiners[0]!
-        : undefined;
-
-    if (!record) {
-      await ctx.reply(
-        walletName
-          ? "Bu isimde bağlı bir cüzdan bulunamadı."
-          : "Kullanım: /miner_start <cüzdan adı>",
-      );
-      return;
-    }
-
-    if (record.status !== "stopped") {
-      await ctx.reply(
-        record.status === "active"
-          ? `✅ ${record.walletName} is already mining.`
-          : `⚠️ ${record.walletName} is ${record.status}. Finish connecting it first.`,
-      );
-      return;
-    }
-
-    // One wallet per plan. Refusing here — rather than letting it be marked
-    // active and then quietly skipped by the scheduler — is the difference
-    // between a clear answer and a wallet that looks started but never mines.
-    if (
-      !isAdminChatId(chatId) &&
-      countActiveMinersForChat(state.miners, chatId) >= 1
-    ) {
-      const active = state.miners.find(
-        (m) => m.chatId === chatId && m.status === "active",
-      );
-
-      await ctx.reply(
-        [
-          "⚠️ A plan covers one mining wallet.",
-          "",
-          `Currently mining: ${active ? safeMessageText(active.walletName) : "—"}`,
-          "",
-          "Pause that one first, then start this one.",
-        ].join("\n"),
-      );
-      return;
-    }
-
-    record.status = "active";
-    record.lastError = null;
-    writeBeeMinerState(state);
-
-    await ctx.reply(`✅ ${record.walletName} için otomatik madencilik başlatıldı.`);
-  });
+  }
 
   bot.command("plans", async (ctx) => {
     // Prices are quoted in USDT now. The plan's priceUsd is the source of
@@ -9930,13 +9752,14 @@ export async function startBot(botToken: string) {
     // The two menus are split by subject, not duplicated:
     //   "/" menu  -> the radar side: wallet lookup, plus start/help
     //   keyboard  -> the paid side: Stars purchase and the dashboard
-    // Deliberately NO mining command here — mining is managed on the
-    // dashboard, and listing /miner_* in both places is what made the bot feel
-    // like it had two competing menus. They still work when typed.
+    // No mining command here, and none in the bot at all any more: mining is
+    // managed on the dashboard. The old /miner_* names still resolve, but only
+    // to a redirect, so chat history full of "tap /miner_start" does not fall
+    // silent.
     { command: "start", description: "🚀 Open the menu" },
     { command: "info", description: "🔍 Look up a wallet" },
-    { command: "epoch", description: "⏳ Mining cycle remaining" },
     { command: "trial", description: "🎁 Start the 3-day trial" },
+    { command: "arc", description: "🧪 3 more days on Arc testnet" },
     { command: "help", description: "ℹ️ Help" },
   ];
   const groupCommandList = [
