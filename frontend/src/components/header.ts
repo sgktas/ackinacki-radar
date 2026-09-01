@@ -89,7 +89,7 @@ const HEADER_COPY = {
         'Boost Farm',
 
       '/arc':
-        'Arc · Hediye',
+        'Arc · 3 Gün Dene',
 
       '/plans':
         'Planlar',
@@ -154,7 +154,7 @@ const HEADER_COPY = {
         'Boost Farm',
 
       '/arc':
-        'Arc · Free',
+        'Arc · Try 3 Days',
 
       '/plans':
         'Plans',
@@ -219,7 +219,7 @@ const HEADER_COPY = {
         'Boost Farm',
 
       '/arc':
-        'Arc · Бонус',
+        'Arc · 3 Дня',
 
       '/plans':
         'Планы',

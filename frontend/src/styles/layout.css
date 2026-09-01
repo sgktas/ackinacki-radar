@@ -157,6 +157,12 @@
    among seven equal labels. Kept scoped to .nav-featured so no other tab is
    touched. */
 .primary-nav a.nav-featured {
+  /* Set explicitly rather than inherited: a later, equal-specificity
+     ".primary-nav a { gap: 0 }" refinement elsewhere in this file wins the
+     cascade for any nav item that does not set its own gap, which glued the
+     dot to the label text here. */
+  gap: 8px;
+
   margin: 9px 6px;
   padding: 0 16px;
 

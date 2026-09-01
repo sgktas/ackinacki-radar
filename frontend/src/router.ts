@@ -21,6 +21,11 @@ export const routes: Route[] = [
     title: 'Ana Sayfa',
   },
   {
+    name: 'arc',
+    path: '/arc',
+    title: 'Arc',
+  },
+  {
     name: 'cloud-miner',
     path: '/cloud-miner',
     title: 'Cloud Miner',
@@ -34,11 +39,6 @@ export const routes: Route[] = [
     name: 'boost-farm',
     path: '/boost-farm',
     title: 'Boost Farm',
-  },
-  {
-    name: 'arc',
-    path: '/arc',
-    title: 'Arc',
   },
   {
     name: 'plans',
