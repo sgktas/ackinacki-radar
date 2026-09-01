@@ -6290,6 +6290,34 @@ const ARC_TRIAL_DAYS = Number(process.env.ARC_TRIAL_DAYS || 3);
 // Total Arc trials to hand out, so a free-faucet rail cannot quietly replace
 // the paid ones. Not a cost limit: mining gas is paid by the user's own wallet.
 const ARC_TRIAL_QUOTA = Number(process.env.ARC_TRIAL_QUOTA || 100);
+
+// A live Arc invoice reserves a trial slot until it expires. Without this,
+// multiple people can receive an invoice for the final remaining slot and all
+// later be credited.
+function getActiveArcTrialReservations(
+  state: PaymentsState,
+  now = Date.now(),
+): Set<number> {
+  const reservations = new Set(
+    (state.arcTrialUsed ?? []).filter(
+      (chatId) => Number.isSafeInteger(chatId) && chatId > 0,
+    ),
+  );
+
+  for (const invoice of state.pendingInvoices) {
+    if (
+      invoice.currency === "usdc" &&
+      invoice.arcInvoiceId &&
+      new Date(invoice.expiresAt).getTime() > now &&
+      Number.isSafeInteger(invoice.chatId) &&
+      invoice.chatId > 0
+    ) {
+      reservations.add(invoice.chatId);
+    }
+  }
+
+  return reservations;
+}
 // The chain this rail is allowed to credit from. Mainnet launches 2026-09-16
 // with a different id; until this value is changed deliberately, a mainnet
 // payment cannot be credited by testnet code and vice versa.
@@ -6628,55 +6656,123 @@ async function runArcPaymentsCheckTick(bot: Telegraf<any>) {
       // paid with dust therefore buys nothing.
       if (paidRaw < BigInt(invoice.amountRaw)) continue;
 
-      const plan = resolvePaidPlan(invoice.planId);
+      // The RPC call above can take a while. Reload before mutating so a
+      // just-created invoice or a trial credited by another path is not lost
+      // behind the older scheduler snapshot.
+      const currentState = readPaymentsState();
+      const currentInvoice = currentState.pendingInvoices.find(
+        (item) =>
+          item.id === invoice.id &&
+          item.currency === "usdc" &&
+          item.arcInvoiceId &&
+          new Date(item.expiresAt).getTime() > Date.now(),
+      );
+
+      if (!currentInvoice) continue;
+
+      const plan = resolvePaidPlan(currentInvoice.planId);
 
       if (!plan) continue;
+
+      const used = new Set(currentState.arcTrialUsed ?? []);
+
+      if (used.has(currentInvoice.chatId)) {
+        currentState.pendingInvoices = currentState.pendingInvoices.filter(
+          (item) => item.id !== currentInvoice.id,
+        );
+        writePaymentsState(currentState);
+        continue;
+      }
+
+      // New invoices reserve their slot, but keep a fail-closed guard here
+      // for old invoices or any unexpected concurrent writer. A paid testnet
+      // invoice must never become the 26th trial.
+      if (used.size >= ARC_TRIAL_QUOTA) {
+        currentState.pendingInvoices = currentState.pendingInvoices.filter(
+          (item) => item.id !== currentInvoice.id,
+        );
+        appendPaymentHistory(currentState, {
+          id: `arc:quota:${currentInvoice.arcInvoiceId}:${currentInvoice.id}`,
+          status: "invoice_deleted",
+          source: "arc",
+          chatId: currentInvoice.chatId,
+          planId: currentInvoice.planId,
+          invoiceId: currentInvoice.id,
+          amountRaw: paidRaw.toString(),
+          currency: "usdc",
+          transactionId: currentInvoice.arcInvoiceId ?? null,
+          invoiceCreatedAt: currentInvoice.createdAt,
+          recordedAt: new Date().toISOString(),
+          activeUntil: null,
+          note: `Arc trial quota (${ARC_TRIAL_QUOTA}) reached before confirmation`,
+        });
+        writePaymentsState(currentState);
+        console.warn("Arc payments: paid invoice rejected because quota is full:", {
+          chatId: currentInvoice.chatId,
+          code: currentInvoice.code,
+          quota: ARC_TRIAL_QUOTA,
+        });
+
+        try {
+          await bot.telegram.sendMessage(
+            currentInvoice.chatId,
+            [
+              "Arc testnet denemesi kontenjanı ödeme onaylanmadan önce doldu.",
+              "Faucet USDC ücretsiz olduğu için abonelik açılmadı.",
+            ].join("\n"),
+          );
+        } catch (error) {
+          console.error("Arc payments: quota notice failed:", {
+            chatId: currentInvoice.chatId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+        continue;
+      }
 
       // ARC_TRIAL_DAYS, not plan.days: this rail hands out a trial, and the
       // testnet USDC that paid for it cost the payer nothing.
       const activeUntil = grantSubscription(
-        state,
-        invoice.chatId,
+        currentState,
+        currentInvoice.chatId,
         plan.id,
         ARC_TRIAL_DAYS,
         { trial: true },
       );
 
-      state.arcTrialUsed = [
-        ...(state.arcTrialUsed ?? []).filter((id) => id !== invoice.chatId),
-        invoice.chatId,
-      ];
-      state.pendingInvoices = state.pendingInvoices.filter(
-        (item) => item.id !== invoice.id,
+      currentState.arcTrialUsed = [...used, currentInvoice.chatId];
+      currentState.pendingInvoices = currentState.pendingInvoices.filter(
+        (item) => item.id !== currentInvoice.id,
       );
 
-      appendPaymentHistory(state, {
-        id: `arc:${invoice.arcInvoiceId}:${invoice.id}`,
+      appendPaymentHistory(currentState, {
+        id: `arc:${currentInvoice.arcInvoiceId}:${currentInvoice.id}`,
         status: "confirmed",
         source: "arc",
-        chatId: invoice.chatId,
+        chatId: currentInvoice.chatId,
         planId: plan.id,
-        invoiceId: invoice.id,
+        invoiceId: currentInvoice.id,
         amountRaw: paidRaw.toString(),
         currency: "usdc",
-        transactionId: invoice.arcInvoiceId ?? null,
-        invoiceCreatedAt: invoice.createdAt,
+        transactionId: currentInvoice.arcInvoiceId ?? null,
+        invoiceCreatedAt: currentInvoice.createdAt,
         recordedAt: new Date().toISOString(),
         activeUntil,
       });
+      writePaymentsState(currentState);
 
       credited += 1;
 
       console.log("Arc payments: trial activated:", {
-        chatId: invoice.chatId,
-        code: invoice.code,
+        chatId: currentInvoice.chatId,
+        code: currentInvoice.code,
         amount: formatUsdcAmount(paidRaw.toString()),
         activeUntil,
       });
 
       try {
         await bot.telegram.sendMessage(
-          invoice.chatId,
+          currentInvoice.chatId,
           [
             "✅ Arc ödemen zincirde doğrulandı.",
             "",
@@ -6689,26 +6785,32 @@ async function runArcPaymentsCheckTick(bot: Telegraf<any>) {
         );
       } catch (error) {
         console.error("Arc payments: activation notice failed:", {
-          chatId: invoice.chatId,
+          chatId: currentInvoice.chatId,
           message: error instanceof Error ? error.message : String(error),
         });
       }
     }
 
-    // Expired invoices go, so a leaked code cannot be redeemed days later.
-    state.pendingInvoices = state.pendingInvoices.filter(
-      (item) =>
-        item.currency !== "usdc" ||
-        new Date(item.expiresAt).getTime() > now,
-    );
-
+    let latestBlock: number | null = null;
     try {
-      state.arcLastBlock = await fetchArcBlockNumber();
+      latestBlock = await fetchArcBlockNumber();
     } catch {
       // Only used to show freshness in the admin panel.
     }
 
-    writePaymentsState(state);
+    // Fetching the optional height can take time, so obtain a fresh snapshot
+    // only after it finishes. This avoids overwriting invoices created while
+    // the scheduler was waiting on the RPC.
+    const finalState = readPaymentsState();
+    finalState.pendingInvoices = finalState.pendingInvoices.filter(
+      (item) =>
+        item.currency !== "usdc" ||
+        new Date(item.expiresAt).getTime() > Date.now(),
+    );
+    if (latestBlock !== null) {
+      finalState.arcLastBlock = latestBlock;
+    }
+    writePaymentsState(finalState);
 
     if (credited) {
       console.log("Arc payments check finished:", { credited });
@@ -8339,15 +8441,10 @@ export async function startBot(botToken: string) {
     }
 
     const state = readPaymentsState();
-    const used = state.arcTrialUsed ?? [];
+    const used = new Set(state.arcTrialUsed ?? []);
 
-    if (used.includes(chatId)) {
+    if (used.has(chatId)) {
       await ctx.reply("Arc denemeni zaten kullandın.");
-      return;
-    }
-
-    if (used.length >= ARC_TRIAL_QUOTA) {
-      await ctx.reply(`Arc testnet denemesi kontenjanı doldu (${ARC_TRIAL_QUOTA}).`);
       return;
     }
 
@@ -8359,10 +8456,16 @@ export async function startBot(botToken: string) {
       (item) =>
         item.chatId === chatId &&
         item.currency === "usdc" &&
+        item.arcInvoiceId &&
         new Date(item.expiresAt).getTime() > now,
     );
 
     if (!invoice) {
+      if (getActiveArcTrialReservations(state, now).size >= ARC_TRIAL_QUOTA) {
+        await ctx.reply(`Arc testnet denemesi kontenjanı doldu (${ARC_TRIAL_QUOTA}).`);
+        return;
+      }
+
       const code = buildInvoiceCode();
       const plan = PLANS[0]!;
 

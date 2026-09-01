@@ -5753,16 +5753,45 @@ export function startServer(port: number) {
     };
   }
 
+  // A live Arc invoice holds a slot until it expires. Count those reservations
+  // with confirmed trials so a burst of requests cannot oversubscribe the cap.
+  function getActiveArcTrialReservations(
+    state: PaymentsState,
+    now = Date.now(),
+  ): Set<number> {
+    const reservations = new Set(
+      (state.arcTrialUsed ?? []).filter(
+        (chatId) => Number.isSafeInteger(chatId) && chatId > 0,
+      ),
+    );
+
+    for (const invoice of state.pendingInvoices) {
+      if (
+        invoice.currency === "usdc" &&
+        invoice.arcInvoiceId &&
+        new Date(invoice.expiresAt).getTime() > now &&
+        Number.isSafeInteger(invoice.chatId) &&
+        invoice.chatId > 0
+      ) {
+        reservations.add(invoice.chatId);
+      }
+    }
+
+    return reservations;
+  }
+
   function arcTrialStatus(chatId: number) {
     const cfg = arcTrialConfig();
     const state = readPaymentsState();
-    const used = state.arcTrialUsed ?? [];
+    const used = new Set(state.arcTrialUsed ?? []);
     const now = Date.now();
+    const reservations = getActiveArcTrialReservations(state, now);
 
     const pending = state.pendingInvoices.find(
       (item) =>
         item.chatId === chatId &&
         item.currency === "usdc" &&
+        item.arcInvoiceId &&
         new Date(item.expiresAt).getTime() > now,
     );
 
@@ -5778,11 +5807,13 @@ export function startServer(port: number) {
     return {
       ok: true as const,
       enabled: cfg.enabled,
-      used: used.includes(chatId),
-      quotaReached: used.length >= cfg.quota,
+      used: used.has(chatId),
+      // A user who already holds a live invoice must still be able to finish
+      // that reserved trial even when every slot is otherwise taken.
+      quotaReached: reservations.size >= cfg.quota && !pending,
       days: cfg.days,
       priceUsd: cfg.priceUsd,
-      taken: used.length,
+      taken: used.size,
       quota: cfg.quota,
       subscription: sub
         ? {
@@ -5818,15 +5849,10 @@ export function startServer(port: number) {
     }
 
     const state = readPaymentsState();
-    const used = state.arcTrialUsed ?? [];
+    const used = new Set(state.arcTrialUsed ?? []);
 
-    if (used.includes(chatId)) {
+    if (used.has(chatId)) {
       res.status(400).json({ ok: false, error: "ARC_TRIAL_ALREADY_USED" });
-      return;
-    }
-
-    if (used.length >= cfg.quota) {
-      res.status(400).json({ ok: false, error: "ARC_TRIAL_QUOTA_REACHED" });
       return;
     }
 
@@ -5838,10 +5864,16 @@ export function startServer(port: number) {
       (item) =>
         item.chatId === chatId &&
         item.currency === "usdc" &&
+        item.arcInvoiceId &&
         new Date(item.expiresAt).getTime() > now,
     );
 
     if (!invoice) {
+      if (getActiveArcTrialReservations(state, now).size >= cfg.quota) {
+        res.status(400).json({ ok: false, error: "ARC_TRIAL_QUOTA_REACHED" });
+        return;
+      }
+
       const code = buildInvoiceCode();
 
       invoice = {
