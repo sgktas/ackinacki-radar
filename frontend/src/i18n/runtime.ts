@@ -134,6 +134,36 @@ const CATALOG:
   ],
 
   [
+    'Arc denemesi şu anda kapalı.',
+    'Arc trial is currently off.',
+    'Пробный период Arc сейчас отключён.',
+  ],
+
+  [
+    'Arc denemeni zaten kullandın.',
+    'You already used your Arc trial.',
+    'Вы уже использовали пробный период Arc.',
+  ],
+
+  [
+    'Kontenjan doldu.',
+    'The quota is full.',
+    'Квота исчерпана.',
+  ],
+
+  [
+    'Oturumun düşmüş görünüyor, sayfayı yenile.',
+    'Your session looks expired, refresh the page.',
+    'Похоже, сессия истекла — обновите страницу.',
+  ],
+
+  [
+    'Bir şeyler ters gitti, tekrar dene.',
+    'Something went wrong, try again.',
+    'Что-то пошло не так, попробуйте снова.',
+  ],
+
+  [
     'CIRCLE FAUCET’İ AÇ',
     'OPEN CIRCLE FAUCET',
     'ОТКРЫТЬ КРАН CIRCLE',
