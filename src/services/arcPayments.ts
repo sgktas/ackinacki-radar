@@ -111,7 +111,7 @@ export function formatUsdcAmount(raw: string): string {
 export function codeToInvoiceId(code: string): string {
   const normalized = code.trim().toUpperCase();
 
-  if (!/^[A-Z0-9]{1,32}$/.test(normalized)) {
+  if (!/^[A-Z0-9-]{1,32}$/.test(normalized)) {
     throw new Error("ARC_INVALID_INVOICE_CODE");
   }
 
@@ -139,11 +139,13 @@ export function invoiceIdToCode(invoiceId: string): string | null {
     if (Number.isNaN(byte)) return null;
     if (byte === 0) break; // padding reached
 
-    // A-Z and 0-9 only. Anything else means this was not one of our codes.
+    // A-Z, 0-9 and the SDK's optional separator only. Anything else means
+    // this was not one of our codes.
     const isDigit = byte >= 0x30 && byte <= 0x39;
     const isUpper = byte >= 0x41 && byte <= 0x5a;
+    const isHyphen = byte === 0x2d;
 
-    if (!isDigit && !isUpper) return null;
+    if (!isDigit && !isUpper && !isHyphen) return null;
 
     code += String.fromCharCode(byte);
   }
