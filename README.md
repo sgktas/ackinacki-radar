@@ -20,6 +20,32 @@ bot: **[@ackinackiradar_bot](https://t.me/ackinackiradar_bot)**
   activity and reward history.
 - **Subscriptions.** Three payment rails, all exercised end to end against live
   mainnet: Telegram Stars, USDT-on-TON, and native NACKL.
+- **Arc testnet payments.** A separate, quota-limited trial flow uses native
+  test USDC on Arc. Each invoice is bound to its on-chain payment, so the
+  service confirms settlement from contract state instead of guessing from a
+  wallet transaction list.
+
+## Arc testnet payment flow
+
+Acki Nacki Radar is a live integration of the open-source
+[ArcPay InvoiceRegistry](https://github.com/sgktas/arcpay) pattern. It is a
+testnet experiment, not a sale: users obtain test USDC from the faucet and a
+successful payment grants a short, separately tracked trial. It can never be
+credited as a normal paid subscription.
+
+1. A user starts the Arc trial from the dashboard or the Telegram bot.
+2. The backend creates a unique, human-readable invoice code and encodes it as
+   a `bytes32` invoice id in the Arc payment call.
+3. The payment watcher reads the registry's recorded amount for that exact
+   merchant and invoice id.
+4. Only after the contract state reaches the expected amount does the backend
+   grant the trial. Open invoices reserve a quota slot, preventing a rush of
+   pending invoices from exceeding the testnet allocation.
+
+The integration is deliberately defensive: Arc log reads use bounded-range
+`eth_getLogs` polling with multi-RPC failover, and payment confirmation reads
+fresh state before granting access. See the [ArcPay README](https://github.com/sgktas/arcpay)
+for the contract, SDK, and the testnet findings behind those choices.
 
 ## How the mining works
 
@@ -61,6 +87,7 @@ src/
     epochClock.ts       canonical 5-minute epoch countdown
     payments.ts         plans, subscriptions, Telegram Stars
     tonPayments.ts      USDT-on-TON invoice matching
+    arcPayments.ts      Arc USDC InvoiceRegistry reads and reconciliation
     qr.ts               wallet-approval QR rendering
 ```
 
