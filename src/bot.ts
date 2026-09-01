@@ -2822,7 +2822,7 @@ async function sendWalletsScreen(ctx: any) {
 function buildMainKeyboard() {
   return Markup.keyboard([
     ["/start 🚀", "/info 🔍"],
-    ["/trial 🎁", "/arc 🧪"],
+    ["/trial 🧪", "/epoch ⏳"],
     ["/help ℹ️"],
   ]).resize();
 }
@@ -2865,14 +2865,13 @@ function buildHowToUseMessage(_languageCode?: string) {
   return [
     "📖 Getting Started",
     "",
-    `1) 🎁 /trial ile ${TRIAL_DAYS} günlük ücretsiz hediyeni al. Ödeme gerekmez.`,
+    `1) 🧪 /trial ile ${TRIAL_DAYS} günlük ücretsiz hediyeni al — Arc test ağında, Circle faucet'inden aldığın ücretsiz test USDC ile.`,
     "2) Soldaki Dashboard butonuna bas. Mini App Telegram hesabını otomatik tanır.",
     "3) Dashboard menüsünden Cloud Miner'ı aç.",
     "4) Acki Nacki cüzdan adını gir ve Connect Wallet'a bas.",
     "5) AN Wallet'ı açıp madencilik anahtarı isteğini onayla.",
     "6) Cloud Miner'a dön, Check'e bas, doğrulandıktan sonra madenciliği başlat.",
-    `7) 🧪 Hediye bitince Arc test ağından ${TRIAL_DAYS} gün daha alabilirsin — ücretsiz test USDC ile: /arc`,
-    "8) Sonrasında devam etmek için Planlar'dan Stars, USDT/TON veya NACKL ile plan alabilirsin.",
+    "7) Hediye bitince devam etmek için Planlar'dan Stars, USDT/TON veya NACKL ile plan alabilirsin.",
     "",
     "Madencilik panelden yönetilir; botta madencilik komutu yoktur.",
     "",
@@ -2894,11 +2893,11 @@ function buildHelpMessage(_languageCode?: string) {
     "🔍 /info",
     "Look up a wallet name or an address starting with 0: and show its balance, MBI and chain details.",
     "",
-    "🎁 /trial",
-    `Start a free ${TRIAL_DAYS}-day Cloud Miner gift with no payment required. Available once per account.`,
+    "🧪 /trial",
+    `Arc test ağı üzerinden ${TRIAL_DAYS} günlük ücretsiz Cloud Miner hediyesi al. Circle faucet'inden aldığın test USDC ile — gerçek para değil. Hesap başına bir kez.`,
     "",
-    "🧪 /arc",
-    `Arc test ağı üzerinden ${TRIAL_DAYS} gün daha kazan. Ücretsiz test USDC ile, gerçek para değil.`,
+    "⏳ /epoch",
+    "Mevcut madencilik döngüsünün bitmesine kalan süreyi gösterir.",
     "",
     "⛏️ Madencilik",
     "Cüzdan bağlama, başlatma/durdurma ve canlı durum panelde: https://ackinackiradar.com/cloud-miner",
@@ -8258,6 +8257,10 @@ export async function startBot(botToken: string) {
     );
   });
 
+  // PARKED for the Arc testnet run — /trial points at handleArcTrialRequest
+  // instead. Kept intact rather than deleted so restoring the free trial is
+  // a one-line change when the promo ends.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async function handleTrialRequest(ctx: any) {
     const chatId = ctx.chat?.id;
 
@@ -8402,10 +8405,19 @@ export async function startBot(botToken: string) {
     );
   }
 
-  bot.command("trial", handleTrialRequest);
-  bot.command("arc", handleArcTrialRequest);
+  // For the duration of the Arc testnet run, /trial IS the Arc trial: one
+  // command, one thing, and the name people already know. handleTrialRequest
+  // (the free, no-payment trial) is parked just above — restore this line to
+  // it when the promo ends.
+  bot.command("trial", handleArcTrialRequest);
+  // /epoch is not a mining control — it only reports how long the current
+  // cycle has left — so it stays while the miner_* commands are gone.
+  bot.command("epoch", async (ctx) => {
+    await ctx.reply(buildMiningCycleRemainingText());
+  });
+
   bot.command("trial_arc", handleArcTrialRequest);
-  bot.hears(MENU_TRIAL, handleTrialRequest);
+  bot.hears(MENU_TRIAL, handleArcTrialRequest);
 
   // /wallets is the name people look for; /forget kept as an alias so anything
   // that already tells users to type it keeps working.
@@ -9006,7 +9018,6 @@ export async function startBot(botToken: string) {
     "miner_remove",
     "radar_wallets",
     "forget",
-    "epoch",
   ]) {
     bot.command(retired, async (ctx) => {
       await ctx.reply(
@@ -9758,8 +9769,8 @@ export async function startBot(botToken: string) {
     // silent.
     { command: "start", description: "🚀 Open the menu" },
     { command: "info", description: "🔍 Look up a wallet" },
-    { command: "trial", description: "🎁 Start the 3-day trial" },
-    { command: "arc", description: "🧪 3 more days on Arc testnet" },
+    { command: "trial", description: "🧪 3 free days via Arc testnet" },
+    { command: "epoch", description: "⏳ Mining cycle remaining" },
     { command: "help", description: "ℹ️ Help" },
   ];
   const groupCommandList = [
