@@ -9854,7 +9854,10 @@ export async function startBot(botToken: string) {
     const text = String(ctx.message?.text || "").trim();
 
     if (text.startsWith("/")) {
-      await ctx.reply("Unknown command. Use /help.");
+      // A chat can retain an older reply keyboard after a deploy. Returning
+      // the current one here lets a retired button such as /arc repair itself
+      // on the very first tap instead of leaving the stale command visible.
+      await ctx.reply("Unknown command. Use /help.", buildMainKeyboard());
     }
   });
 
