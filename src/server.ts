@@ -5665,6 +5665,82 @@ export function startServer(port: number) {
     });
   });
 
+  // Subtract days from a subscription instead of deleting the whole record.
+  //
+  // There is exactly ONE subscription per account: a trial and a paid plan do
+  // not sit side by side, they extend the same `activeUntil`. Nothing records
+  // which days came from which grant, so "delete just the trial" is not an
+  // operation this data can support — revoking takes the paid plan with it.
+  // Subtracting the trial's days is the operation that actually does what is
+  // wanted, and it leaves the rest of the subscription alone.
+  //
+  // The result is allowed to land in the past. Subtracting 3 days from a
+  // subscription with 1 day left really does mean it expired 2 days ago, and
+  // saying so is more useful than silently clamping to now.
+  app.post("/api/admin/subscription/reduce", requireAdminAuth, (req: any, res) => {
+    const chatId = Number(req.body?.chatId);
+    const days = Number(req.body?.days);
+
+    if (!Number.isFinite(chatId) || chatId === 0 || !Number.isFinite(days) || days <= 0) {
+      res.status(400).json({ ok: false, error: "INVALID_INPUT" });
+      return;
+    }
+
+    const state = readPaymentsState();
+    const existing = state.subscriptions[String(chatId)];
+
+    if (!existing) {
+      res.status(400).json({ ok: false, error: "NO_SUBSCRIPTION" });
+      return;
+    }
+
+    const previousUntil = existing.activeUntil;
+    const activeUntil = new Date(
+      new Date(previousUntil).getTime() - days * 24 * 60 * 60 * 1000,
+    ).toISOString();
+
+    // Spread the existing record: the trial flag and anything else on it must
+    // survive an adjustment that is only about the end date.
+    state.subscriptions[String(chatId)] = { ...existing, activeUntil };
+
+    appendPaymentHistory(state, {
+      id: `manual-reduce:${chatId}:${Date.now()}`,
+      status: "manual_grant",
+      source: "admin",
+      chatId,
+      planId: existing.planId,
+      invoiceId: null,
+      amountRaw: null,
+      currency: null,
+      transactionId: null,
+      senderAddress: null,
+      invoiceCreatedAt: null,
+      recordedAt: new Date().toISOString(),
+      activeUntil,
+      adminTelegramId: Number(req.telegramId),
+      note: `${days} gün admin panelinden düşüldü (önceki bitiş: ${previousUntil})`,
+    });
+
+    writePaymentsState(state);
+
+    console.log("Admin reduced subscription:", {
+      byAdmin: req.telegramId,
+      chatId,
+      days,
+      previousUntil,
+      activeUntil,
+    });
+
+    res.json({
+      ok: true,
+      chatId,
+      days,
+      previousUntil,
+      activeUntil,
+      stillActive: new Date(activeUntil).getTime() > Date.now(),
+    });
+  });
+
   app.post("/api/admin/subscription/revoke", requireAdminAuth, (req: any, res) => {
     const chatId = Number(req.body?.chatId);
 

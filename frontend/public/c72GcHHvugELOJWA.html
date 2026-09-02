@@ -298,8 +298,23 @@
           <button class="act danger" id="r-btn">Kaldır</button>
           <span id="r-out" class="note" style="margin:0"></span>
         </div>
-        <p class="note">Aboneliği tamamen siler. Abonelikler sekmesindeki
-          “kaldır” butonuyla aynı işi yapar.</p>
+        <p class="note">Aboneliği <b>tamamen</b> siler — deneme günleri ve
+          satın alınmış plan günleri tek bir kayıtta birleşik olduğu için
+          ikisini birden götürür. Sadece denemenin günlerini geri almak
+          istiyorsan aşağıdaki “Abonelikten gün düş”ü kullan.</p>
+      </div>
+
+      <div class="card">
+        <h3>Abonelikten gün düş</h3>
+        <div class="row">
+          <input id="d-chat" placeholder="chatId" size="14" />
+          <input id="d-days" placeholder="gün" size="6" value="3" />
+          <button class="act danger" id="d-btn">Gün düş</button>
+          <span id="d-out" class="note" style="margin:0"></span>
+        </div>
+        <p class="note">Bitiş tarihini geriye çeker, aboneliği silmez. Deneme
+          günlerini geri almanın doğru yolu budur: plan günleri yerinde kalır.
+          Sonuç geçmişte kalırsa abonelik bitmiş sayılır.</p>
       </div>
 
       <div class="card">
@@ -487,6 +502,7 @@
         + '<td>' + esc(dt(s.activeUntil)) + '</td>'
         + '<td>' + (s.active ? '<span class="pill ok">aktif</span>' : '<span class="pill">bitti</span>') + '</td>'
         + '<td><button class="act danger" data-rv-chat="' + esc(s.chatId) + '">kaldır</button> '
+        + '<button class="act" data-reduce-chat="' + esc(s.chatId) + '">− gün</button> '
         + '<button class="act" data-gift="' + esc(s.chatId) + '">🎁 3 gün</button></td>'
         + '</tr>';
     });
@@ -754,6 +770,27 @@
     }
   }
 
+  async function reduce(chatId, days, out){
+    if (!chatId || !days){ if (out) out.textContent = 'chatId ve gün gerekli.'; return; }
+    if (out) out.textContent = '…';
+    try {
+      var res = await fetch('/api/admin/subscription/reduce', {
+        method:'POST', headers: headers(),
+        body: JSON.stringify({ chatId: chatId, days: days })
+      });
+      var data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      var msg = days + ' gün düşüldü. Yeni bitiş: '
+        + new Date(data.activeUntil).toLocaleString('tr-TR')
+        + (data.stillActive ? '' : ' (abonelik bitti)');
+      if (out) out.textContent = msg; else alert(msg);
+      await load();
+    } catch (e){
+      if (out) out.textContent = 'Hata: ' + e.message;
+      else alert('Hata: ' + e.message);
+    }
+  }
+
   async function revoke(chatId, out){
     if (!chatId){ if (out) out.textContent = 'chatId gerekli.'; return; }
     if (out) out.textContent = '…';
@@ -885,6 +922,26 @@
       return;
     }
 
+    var reduceBtn = ev.target.closest('[data-reduce-chat]');
+    if (reduceBtn){
+      var reduceChat = reduceBtn.getAttribute('data-reduce-chat');
+      var reduceDays = prompt(
+        reduceChat + ' hesabindan kac gun dusulsun?\n\n'
+        + 'Abonelik silinmez, sadece bitis tarihi geriye ceker.',
+        '3'
+      );
+      if (reduceDays === null) return;
+      reduceDays = Number(String(reduceDays).trim());
+      if (!isFinite(reduceDays) || reduceDays <= 0){
+        alert('Gecerli bir gun sayisi gir.');
+        return;
+      }
+      reduceBtn.disabled = true;
+      await reduce(Number(reduceChat), reduceDays, null);
+      reduceBtn.disabled = false;
+      return;
+    }
+
     var notifyBtn = ev.target.closest('[data-notify]');
     if (notifyBtn){
       showView('actions');
@@ -928,8 +985,21 @@
   $('r-btn').addEventListener('click', function(){
     var id = Number($('r-chat').value.trim());
     if (!id){ $('r-out').textContent = 'chatId gerekli.'; return; }
-    if (!confirm(id + ' aboneliği kaldırılsın mı?')) return;
+    if (!confirm(
+      id + ' aboneligi TAMAMEN kaldirilsin mi?\n\n'
+      + 'Deneme gunleri ve satin alinmis plan gunleri ayni kayitta oldugu icin '
+      + 'ikisi birden silinir. Sadece denemenin gunlerini geri almak istiyorsan '
+      + 'iptal et ve "Abonelikten gun dus"u kullan.'
+    )) return;
     revoke(id, $('r-out'));
+  });
+
+  $('d-btn').addEventListener('click', function(){
+    var id = Number($('d-chat').value.trim());
+    var days = Number($('d-days').value.trim());
+    if (!id || !days){ $('d-out').textContent = 'chatId ve gün gerekli.'; return; }
+    if (!confirm(id + ' aboneliginden ' + days + ' gun dusulsun mu?')) return;
+    reduce(id, days, $('d-out'));
   });
 
   $('n-btn').addEventListener('click', async function(){
