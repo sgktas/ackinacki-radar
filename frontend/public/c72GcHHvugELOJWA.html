@@ -495,7 +495,8 @@
 
     var trialRows = (d.payments.trialUsedList || []).map(function(id){
       return '<tr><td>' + esc(id) + '</td>'
-        + '<td><button class="act" data-notify="' + esc(id) + '">bildirim</button></td></tr>';
+        + '<td><button class="act" data-notify="' + esc(id) + '">bildirim</button> '
+        + '<button class="act danger" data-trial-reset="' + esc(id) + '">denemeyi sıfırla</button></td></tr>';
     });
     table($('t-trials'), ['chatId','işlem'], trialRows, 'Deneme kullanan yok.');
 
@@ -857,6 +858,30 @@
       if (!confirm(giftId + ' hesabına 3 gün hediye abonelik verilsin mi?')) return;
       giftBtn.disabled = true;
       await grant(Number(giftId), 3, 'gift', null);
+      return;
+    }
+
+    var trialBtn = ev.target.closest('[data-trial-reset]');
+    if (trialBtn){
+      var trialChat = trialBtn.getAttribute('data-trial-reset');
+      if (!confirm(
+        trialChat + ' hesabinin deneme hakki geri verilsin mi?\n\n'
+        + 'Bu sadece deneme defterini temizler. Halen suren deneme gunleri '
+        + 'varsa onlar durmaya devam eder - gerekirse aboneligi ayrica iptal et.'
+      )) return;
+      trialBtn.disabled = true;
+      try {
+        var trialRes = await fetch('/api/admin/trial/reset', {
+          method:'POST', headers: headers(),
+          body: JSON.stringify({ chatId: Number(trialChat) })
+        });
+        var trialData = await trialRes.json();
+        if (!trialRes.ok || !trialData.ok) throw new Error(trialData.error || ('HTTP ' + trialRes.status));
+        await load();
+      } catch (e){
+        alert('Deneme sifirlanamadi: ' + e.message);
+        trialBtn.disabled = false;
+      }
       return;
     }
 

@@ -5623,6 +5623,48 @@ export function startServer(port: number) {
 
   // Revokes a subscription outright (as opposed to /grant, which only ever
   // extends). Used by the panel's per-row "kaldir" button.
+  // Clears one account's free-trial ledger entry so the trial can be taken
+  // again.
+  //
+  // Deliberately NOT folded into subscription/revoke. Revoking is for taking
+  // days away — from a refund, a chargeback, an abusive account — and it must
+  // not hand the account a fresh free trial as a side effect. Restoring the
+  // trial is its own decision, so it is its own button.
+  //
+  // This does not touch the subscription. If the trial's days are still
+  // running, revoke them separately; otherwise the account would hold both the
+  // old grant and a new trial right.
+  app.post("/api/admin/trial/reset", requireAdminAuth, (req: any, res) => {
+    const chatId = Number(req.body?.chatId);
+
+    if (!Number.isFinite(chatId) || chatId === 0) {
+      res.status(400).json({ ok: false, error: "INVALID_CHAT_ID" });
+      return;
+    }
+
+    const state = readPaymentsState();
+    const before = (state.trialUsed ?? []).length;
+
+    state.trialUsed = (state.trialUsed ?? []).filter(
+      (id) => Number(id) !== chatId,
+    );
+
+    writePaymentsState(state);
+
+    console.log("Admin reset trial:", {
+      byAdmin: req.telegramId,
+      chatId,
+      removed: before !== state.trialUsed.length,
+    });
+
+    res.json({
+      ok: true,
+      chatId,
+      removed: before !== state.trialUsed.length,
+      remaining: state.trialUsed.length,
+    });
+  });
+
   app.post("/api/admin/subscription/revoke", requireAdminAuth, (req: any, res) => {
     const chatId = Number(req.body?.chatId);
 
