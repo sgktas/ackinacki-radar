@@ -88,8 +88,6 @@ const HEADER_COPY = {
       '/boost-farm':
         'Boost Farm',
 
-      '/arc':
-        'Arc · 3 Gün Dene',
 
       '/plans':
         'Planlar',
@@ -153,8 +151,6 @@ const HEADER_COPY = {
       '/boost-farm':
         'Boost Farm',
 
-      '/arc':
-        'Arc · Try 3 Days',
 
       '/plans':
         'Plans',
@@ -218,8 +214,6 @@ const HEADER_COPY = {
       '/boost-farm':
         'Boost Farm',
 
-      '/arc':
-        'Arc · 3 Дня',
 
       '/plans':
         'Планы',
@@ -577,20 +571,10 @@ export function renderHeader():
       ${routes
         .map(
           route => {
-            const isArc =
-              route.name === 'arc';
-
             const classes =
-              [
-                route.name === active.name
-                  ? 'active'
-                  : '',
-                isArc
-                  ? 'nav-featured'
-                  : '',
-              ]
-                .filter(Boolean)
-                .join(' ');
+              route.name === active.name
+                ? 'active'
+                : '';
 
             return `
               <a
@@ -598,11 +582,6 @@ export function renderHeader():
                 data-route="${route.path}"
                 class="${classes}"
               >
-                ${
-                  isArc
-                    ? '<i class="nav-featured-dot"></i>'
-                    : ''
-                }
                 <span
                   data-route-label="${route.path}"
                 >

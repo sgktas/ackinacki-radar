@@ -4853,14 +4853,3 @@
 }
 
 
-/* Arc trial row in the subscription card. Hidden entirely while the rail is
-   off, so the card is unchanged when we are not running the promo. */
-.cloud-sub-arc-link {
-  color: #00d8ee;
-  text-decoration: none;
-  border-bottom: 1px solid rgba(0, 216, 238, 0.3);
-}
-
-.cloud-sub-arc-link:hover {
-  border-bottom-color: #00d8ee;
-}

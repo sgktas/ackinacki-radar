@@ -467,11 +467,6 @@ function authenticatedMarkup():
               <b id="cloud-sub-end">—</b>
             </div>
 
-            <div class="cloud-sub-row" id="cloud-sub-arc-row" hidden>
-              <span>ARC</span>
-              <b id="cloud-sub-arc">—</b>
-            </div>
-
           </div>
 
         </section>
@@ -1924,56 +1919,6 @@ function renderAuthenticated(
     card.querySelector<HTMLElement>(
       '#cloud-session-user'
     );
-
-
-  // Arc trial state, from its own endpoint rather than /api/dashboard/me:
-  // the promo is deliberately kept out of that response, and a panel row is
-  // not worth coupling the two. The row stays hidden while the rail is off, so
-  // the card looks exactly as it did before when we are not running the promo.
-  const arcRow =
-    card.querySelector<HTMLElement>(
-      '#cloud-sub-arc-row'
-    );
-
-  const arcValue =
-    card.querySelector<HTMLElement>(
-      '#cloud-sub-arc'
-    );
-
-  if (arcRow && arcValue) {
-    fetch('/api/dashboard/arc/trial', { headers: authHeaders() })
-      .then((response) => response.json())
-      .then((status: {
-        ok?: boolean;
-        enabled?: boolean;
-        used?: boolean;
-        quotaReached?: boolean;
-        days?: number;
-      }) => {
-        if (!status?.ok || !status.enabled) {
-          return;
-        }
-
-        arcValue.replaceChildren();
-
-        if (status.used) {
-          arcValue.textContent = 'kullanıldı';
-        } else if (status.quotaReached) {
-          arcValue.textContent = 'kontenjan dolu';
-        } else {
-          const go = document.createElement('a');
-          go.href = '/arc';
-          go.className = 'cloud-sub-arc-link';
-          go.textContent = `+${status.days ?? 3} gün al`;
-          arcValue.append(go);
-        }
-
-        arcRow.hidden = false;
-      })
-      .catch(() => {
-        // A missing promo row is not worth an error in the mining panel.
-      });
-  }
 
 
   if (minerCount) {

@@ -2,7 +2,6 @@ import { getUiLocale } from '../i18n/runtime';
 
 import '../styles/plans.css';
 
-import { renderArcTrialCard } from './arc-trial';
 
 import {
   authHeaders,
@@ -665,14 +664,6 @@ function renderAuthenticated(
       data
     )
   );
-
-
-  // Above the plans, not among them: it is a testnet promo, not a tier.
-  // Renders itself invisible when the rail is off or the quota is full.
-  body.append(
-    renderArcTrialCard()
-  );
-
 
   const intro =
     element(

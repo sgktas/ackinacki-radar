@@ -3,7 +3,6 @@ export type RouteName =
   | 'cloud-miner'
   | 'local-miner'
   | 'boost-farm'
-  | 'arc'
   | 'plans'
   | 'referrals'
   | 'support';
@@ -19,11 +18,6 @@ export const routes: Route[] = [
     name: 'home',
     path: '/',
     title: 'Ana Sayfa',
-  },
-  {
-    name: 'arc',
-    path: '/arc',
-    title: 'Arc',
   },
   {
     name: 'cloud-miner',

@@ -41,7 +41,6 @@ import {
   plansView,
 } from './views/plans';
 
-import { renderArc } from './views/arc';
 
 import {
   referralsView,
@@ -80,8 +79,6 @@ function renderView(): HTMLElement {
     case 'boost-farm':
       return boostFarmView();
 
-    case 'arc':
-      return renderArc();
 
 
     case 'plans':

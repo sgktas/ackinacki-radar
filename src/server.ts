@@ -36,11 +36,6 @@ import {
   usdToTonRaw,
   usdtAmountToRaw,
 } from "./services/tonPayments";
-import {
-  codeToInvoiceId,
-  formatUsdcAmount,
-  usdToUsdcRaw,
-} from "./services/arcPayments";
 import { getChainEpochClock } from "./services/epochClock";
 
 // Same switches the bot's TON checker reads — the dashboard only issues the
@@ -1824,7 +1819,6 @@ type PendingInvoice = {
   currency?: "shell" | "usdt" | "nackl" | "usdc";
   code?: string;
   amountTonRaw?: string;
-  arcInvoiceId?: string;
 };
 
 type Subscription = {
@@ -1836,6 +1830,8 @@ type Subscription = {
 type PaymentHistoryEntry = {
   id: string;
   status: "confirmed" | "manual_grant" | "invoice_deleted";
+  // "arc" is a retired rail. The member stays because confirmed records with
+  // that source exist in payments.json and the admin panel still lists them.
   source: "nackl" | "ton" | "usdt" | "shell" | "stars" | "admin" | "arc";
   chatId: number;
   planId: string;
@@ -1874,9 +1870,6 @@ type PaymentsState = {
   seenNacklMessageIds?: string[];
   nacklBaselineReady?: boolean;
   trialUsed?: number[];
-  // Separate ledger from trialUsed: the free trial and the Arc testnet trial
-  // are different offers, and a person may take one of each.
-  arcTrialUsed?: number[];
   starsCharges?: string[];
   tonLastLt?: number;
   paymentHistory?: PaymentHistoryEntry[];
@@ -2663,7 +2656,15 @@ function formatAdminPaymentAmount(
     if (currency === "nackl") return formatNacklAmount(raw);
     if (currency === "ton") return formatTonAmount(raw);
     if (currency === "usdt") return formatUsdtAmount(raw);
-    if (currency === "usdc") return `${formatUsdcAmount(raw)} USDC`;
+    // The Arc rail is retired, but confirmed "usdc" records remain in
+    // payments.json and the admin panel still lists them. 18 native decimals,
+    // formatted here rather than pulling back a whole removed module.
+    if (currency === "usdc") {
+      const padded = raw.padStart(19, "0");
+      const whole = padded.slice(0, padded.length - 18);
+      const frac = padded.slice(padded.length - 18, padded.length - 16);
+      return `${whole}.${frac} USDC`;
+    }
   } catch {
     // Preserve the raw amount if an old record has an unexpected format.
   }
@@ -5334,32 +5335,6 @@ export function startServer(port: number) {
           })),
         starsChargeList: ((payments as any).starsCharges || []).slice(-100),
         trialUsedList: ((payments as any).trialUsed || []),
-        // Arc testnet trials are a separate offer with a separate ledger, so
-        // they get their own list rather than being mixed into trialUsedList.
-        arcTrialUsedList: ((payments as any).arcTrialUsed || []).map(
-          (chatId: number) => {
-            const grant = (payments.paymentHistory || [])
-              .filter(
-                (item) => item.source === "arc" && item.chatId === chatId,
-              )
-              .slice(-1)[0];
-
-            return {
-              chatId,
-              ...paymentParty(chatId),
-              grantedAt: grant?.recordedAt ?? null,
-              activeUntil: grant?.activeUntil ?? null,
-              amountFormatted: grant
-                ? formatAdminPaymentAmount(grant.amountRaw, grant.currency)
-                : null,
-              invoiceCode: grant?.transactionId ?? null,
-            };
-          },
-        ),
-        arcTrialQuota: Number(process.env.ARC_TRIAL_QUOTA || 100),
-        arcPaymentsEnabled:
-          String(process.env.ARC_PAYMENTS_ENABLED || "false").toLowerCase() ===
-          "true",
       },
       radar: {
         watches: monitor.length,
@@ -5583,43 +5558,6 @@ export function startServer(port: number) {
 
   // Repair action: grant days to an account by hand — for a payment that
   // arrived without a usable code, or an apology.
-  // Clears one account's Arc trial so it can be taken again. This exists for
-  // testing the rail end to end without minting a second Telegram account —
-  // and it does NOT touch the subscription that was granted, since revoking
-  // days is a separate, deliberate action with its own endpoint.
-  app.post("/api/admin/arc/trial/reset", requireAdminAuth, (req: any, res) => {
-    const chatId = Number(req.body?.chatId);
-
-    if (!Number.isFinite(chatId) || chatId === 0) {
-      res.status(400).json({ ok: false, error: "INVALID_CHAT_ID" });
-      return;
-    }
-
-    const state = readPaymentsState();
-    const before = (state.arcTrialUsed ?? []).length;
-
-    state.arcTrialUsed = (state.arcTrialUsed ?? []).filter(
-      (id) => Number(id) !== chatId,
-    );
-
-    // Any invoice still open for that account would otherwise be reused
-    // instead of a fresh one being minted.
-    const invoicesBefore = state.pendingInvoices.length;
-    state.pendingInvoices = state.pendingInvoices.filter(
-      (item) => !(item.currency === "usdc" && item.chatId === chatId),
-    );
-
-    writePaymentsState(state);
-
-    res.json({
-      ok: true,
-      chatId,
-      removed: before !== state.arcTrialUsed.length,
-      invoicesDropped: invoicesBefore - state.pendingInvoices.length,
-      remaining: state.arcTrialUsed.length,
-    });
-  });
-
   app.post("/api/admin/subscription/grant", requireAdminAuth, (req: any, res) => {
     const chatId = Number(req.body?.chatId);
     const days = Number(req.body?.days);
@@ -5722,288 +5660,6 @@ export function startServer(port: number) {
       console.error("Admin notification failed:", { chatId, message: error?.message });
       res.status(502).json({ ok: false, error: "SEND_FAILED", detail: String(error?.message || error) });
     }
-  });
-
-  // --- Arc testnet trial, from the dashboard ----------------------------
-  //
-  // Deliberately NOT a plan. It is paid for with faucet USDC that costs the
-  // payer nothing, so listing it beside the 5/10/25 USD plans would invite the
-  // reading that it is the cheap tier. It is a promo with its own ledger
-  // (arcTrialUsed), its own quota, and its own switch.
-  //
-  // Kept out of /api/dashboard/me on purpose: that response is large and
-  // central, and this feature should not be able to break it.
-
-  function arcTrialConfig() {
-    const registry = String(process.env.ARC_REGISTRY_ADDRESS || "").trim();
-    const merchant = String(process.env.ARC_MERCHANT_ADDRESS || "").trim();
-
-    return {
-      registry,
-      merchant,
-      enabled:
-        String(process.env.ARC_PAYMENTS_ENABLED || "false").toLowerCase() === "true" &&
-        Boolean(registry) &&
-        Boolean(merchant),
-      days: Number(process.env.ARC_TRIAL_DAYS || 3),
-      quota: Number(process.env.ARC_TRIAL_QUOTA || 100),
-      priceUsd: Number(process.env.ARC_TRIAL_PRICE_USD || 1),
-      expiryMs: Number(process.env.ARC_INVOICE_EXPIRY_MINUTES || 60) * 60 * 1000,
-      payUrl: String(process.env.ARC_PAY_URL || "https://ackinackiradar.com/pay").trim(),
-    };
-  }
-
-  // A live Arc invoice holds a slot until it expires. Count those reservations
-  // with confirmed trials so a burst of requests cannot oversubscribe the cap.
-  function getActiveArcTrialReservations(
-    state: PaymentsState,
-    now = Date.now(),
-  ): Set<number> {
-    const reservations = new Set(
-      (state.arcTrialUsed ?? []).filter(
-        (chatId) => Number.isSafeInteger(chatId) && chatId > 0,
-      ),
-    );
-
-    for (const invoice of state.pendingInvoices) {
-      if (
-        invoice.currency === "usdc" &&
-        invoice.arcInvoiceId &&
-        new Date(invoice.expiresAt).getTime() > now &&
-        Number.isSafeInteger(invoice.chatId) &&
-        invoice.chatId > 0
-      ) {
-        reservations.add(invoice.chatId);
-      }
-    }
-
-    return reservations;
-  }
-
-  function arcTrialStatus(chatId: number) {
-    const cfg = arcTrialConfig();
-    const state = readPaymentsState();
-    const used = new Set(state.arcTrialUsed ?? []);
-    const now = Date.now();
-    const reservations = getActiveArcTrialReservations(state, now);
-
-    const pending = state.pendingInvoices.find(
-      (item) =>
-        item.chatId === chatId &&
-        item.currency === "usdc" &&
-        item.arcInvoiceId &&
-        new Date(item.expiresAt).getTime() > now,
-    );
-
-    // What the trial actually bought, so the Arc page can show an outcome
-    // rather than just an offer. Safe to include here and not on the public
-    // invoice endpoint: this one is behind requireDashboardAuth.
-    const sub = state.subscriptions?.[String(chatId)];
-
-    const grant = (state.paymentHistory ?? [])
-      .filter((entry) => entry.source === "arc" && entry.chatId === chatId)
-      .slice(-1)[0];
-
-    return {
-      ok: true as const,
-      enabled: cfg.enabled,
-      used: used.has(chatId),
-      // A user who already holds a live invoice must still be able to finish
-      // that reserved trial even when every slot is otherwise taken.
-      quotaReached: reservations.size >= cfg.quota && !pending,
-      days: cfg.days,
-      priceUsd: cfg.priceUsd,
-      taken: used.size,
-      quota: cfg.quota,
-      subscription: sub
-        ? {
-            planId: sub.planId,
-            activeUntil: sub.activeUntil,
-            active: new Date(sub.activeUntil).getTime() > Date.now(),
-          }
-        : null,
-      grantedAt: grant?.recordedAt ?? null,
-      grantedUntil: grant?.activeUntil ?? null,
-      invoice: pending
-        ? {
-            code: pending.code ?? null,
-            amountRaw: pending.amountRaw,
-            expiresAt: pending.expiresAt,
-            payUrl: `${cfg.payUrl}?i=${pending.code ?? ""}`,
-          }
-        : null,
-    };
-  }
-
-  app.get("/api/dashboard/arc/trial", requireDashboardAuth, (req: any, res) => {
-    res.json(arcTrialStatus(req.telegramId));
-  });
-
-  app.post("/api/dashboard/arc/trial", requireDashboardAuth, (req: any, res) => {
-    const chatId = req.telegramId as number;
-    const cfg = arcTrialConfig();
-
-    if (!cfg.enabled) {
-      res.status(400).json({ ok: false, error: "ARC_NOT_LIVE" });
-      return;
-    }
-
-    const state = readPaymentsState();
-    const used = new Set(state.arcTrialUsed ?? []);
-
-    if (used.has(chatId)) {
-      res.status(400).json({ ok: false, error: "ARC_TRIAL_ALREADY_USED" });
-      return;
-    }
-
-    const now = Date.now();
-
-    // Reuse a live invoice rather than minting a second code for the same
-    // person; two open codes only invites paying the wrong one.
-    let invoice = state.pendingInvoices.find(
-      (item) =>
-        item.chatId === chatId &&
-        item.currency === "usdc" &&
-        item.arcInvoiceId &&
-        new Date(item.expiresAt).getTime() > now,
-    );
-
-    if (!invoice) {
-      if (getActiveArcTrialReservations(state, now).size >= cfg.quota) {
-        res.status(400).json({ ok: false, error: "ARC_TRIAL_QUOTA_REACHED" });
-        return;
-      }
-
-      const code = buildInvoiceCode();
-
-      invoice = {
-        id: `${chatId}:arc:${now}`,
-        chatId,
-        planId: "standard",
-        amountRaw: usdToUsdcRaw(cfg.priceUsd),
-        createdAt: new Date(now).toISOString(),
-        expiresAt: new Date(now + cfg.expiryMs).toISOString(),
-        code,
-        currency: "usdc",
-        arcInvoiceId: codeToInvoiceId(code),
-      };
-
-      state.pendingInvoices.push(invoice);
-      writePaymentsState(state);
-    }
-
-    res.json({
-      ok: true,
-      code: invoice.code,
-      amountRaw: invoice.amountRaw,
-      expiresAt: invoice.expiresAt,
-      days: cfg.days,
-      payUrl: `${cfg.payUrl}?i=${invoice.code ?? ""}`,
-    });
-  });
-
-  // --- Arc payment page -------------------------------------------------
-  //
-  // The page is static and served under the site's CSP, which is
-  // `connect-src 'self'`. It therefore cannot reach an Arc RPC, a CDN, or a
-  // WalletConnect relay by itself — everything it needs comes from here, and
-  // the chain calls it does make go through the injected wallet, which is not
-  // page network traffic and so is unaffected.
-  app.get("/api/arc/config", (_req, res) => {
-    const registry = String(process.env.ARC_REGISTRY_ADDRESS || "").trim();
-    const merchant = String(process.env.ARC_MERCHANT_ADDRESS || "").trim();
-    const enabled =
-      String(process.env.ARC_PAYMENTS_ENABLED || "false").toLowerCase() === "true" &&
-      Boolean(registry) &&
-      Boolean(merchant);
-
-    res.json({
-      ok: true,
-      enabled,
-      chainId: Number(process.env.ARC_EXPECTED_CHAIN_ID || 5042002),
-      chainName: String(process.env.ARC_CHAIN_NAME || "Arc Testnet"),
-      registry,
-      merchant,
-      // For wallet_addEthereumChain, so the payer never has to add the network
-      // by hand. Public endpoints; not secrets.
-      rpcUrl: String(process.env.ARC_PUBLIC_RPC_URL || "https://rpc.testnet.arc.io"),
-      explorerUrl: String(process.env.ARC_EXPLORER_URL || "https://testnet.arcscan.app"),
-      faucetUrl: "https://faucet.circle.com",
-      // Public by design: it ends up in frontend code. Restricted by allowed
-      // domains in the Reown dashboard, not by secrecy. Unused until the
-      // WalletConnect path lands; the CSP has to be widened for that.
-      walletConnectProjectId: String(
-        process.env.ARC_WALLETCONNECT_PROJECT_ID || "",
-      ),
-      testnet: true,
-    });
-  });
-
-  // Invoice lookup by code. Returns only what the payer needs to see; the
-  // chatId that owns the invoice is deliberately not exposed, since the code
-  // travels through Telegram and could be shared.
-  app.get("/api/arc/invoice/:code", (req, res) => {
-    const code = String(req.params.code || "").trim().toUpperCase();
-
-    if (!/^[A-Z0-9]{4,32}$/.test(code)) {
-      res.status(400).json({ ok: false, error: "INVALID_CODE" });
-      return;
-    }
-
-    const state = readPaymentsState();
-    const invoice = state.pendingInvoices.find(
-      (item) =>
-        item.currency === "usdc" &&
-        String(item.code || "").toUpperCase() === code,
-    );
-
-    if (!invoice) {
-      // Settled invoices leave the pending list, so before answering "gone"
-      // check whether we credited it — that is what turns the payment page
-      // from "sent" into "confirmed".
-      //
-      // Answered from our own payment history rather than by querying the
-      // chain: this endpoint takes no auth, and an outbound RPC call per
-      // request would hand a stranger our rate limit. History is also the
-      // right source here, since the question is "did WE credit it", not
-      // "is there money on chain".
-      const settledId = codeToInvoiceId(code);
-      const settled = (state.paymentHistory ?? []).find(
-        (entry) =>
-          entry.source === "arc" &&
-          entry.status === "confirmed" &&
-          entry.transactionId === settledId,
-      );
-
-      if (settled) {
-        res.json({
-          ok: true,
-          code,
-          status: "paid",
-          // Deliberately no chatId and no activeUntil: the code travels
-          // through chat and should not report on an account.
-          days: Number(process.env.ARC_TRIAL_DAYS || 3),
-        });
-        return;
-      }
-
-      // Covers "never existed" and "expired" alike: telling them apart would
-      // let someone probe which codes are real.
-      res.status(404).json({ ok: false, error: "INVOICE_NOT_FOUND" });
-      return;
-    }
-
-    const expired = new Date(invoice.expiresAt).getTime() <= Date.now();
-
-    res.json({
-      ok: true,
-      code,
-      status: "pending",
-      amountRaw: invoice.amountRaw,
-      invoiceId: invoice.arcInvoiceId || null,
-      expiresAt: invoice.expiresAt,
-      expired,
-    });
   });
 
   app.get("/api/radar/wallet-count", (_req, res) => {
